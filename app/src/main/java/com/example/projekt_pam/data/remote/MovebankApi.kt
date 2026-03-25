@@ -15,6 +15,13 @@ interface MovebankApi {
     ): Response<ResponseBody>
 
     @GET("direct-read")
+    suspend fun getAllStudies(
+        @Query("entity_type") entityType: String = "study",
+        @Query("attributes") attributes: String = "id,name,main_location_lat,main_location_long",
+        @Query("license_accepted") licenseAccepted: Boolean = true
+    ): Response<ResponseBody>
+
+    @GET("direct-read")
     suspend fun getEvents(
         @Query("entity_type") entityType: String = "event",
         @Query("study_id") studyId: Long,
@@ -26,14 +33,14 @@ interface MovebankApi {
     // Pobiera ostatnią znaną pozycję dla KAŻDEGO zwierzęcia w badaniu
     @GET("direct-read")
     suspend fun getLatestEventsForAll(
-        @Query("entity_type") entityType: String = "event",
-        @Query("study_id") studyId: Long,
+        @Query("entity_type") entityType: String = "event",@Query("study_id") studyId: Long,
+        @Query("sensor_type_id") sensorTypeId: Long = 653, // Add this for GPS
         @Query("max_events_per_individual") maxEvents: Int = 1,
         @Query("attributes") attributes: String = "location_lat,location_long,individual_id",
         @Query("license_accepted") licenseAccepted: Boolean = true
     ): Response<ResponseBody>
 
     companion object {
-        const val BASE_URL = "https://www.movebank.org/movebank/service/direct-read"
+        const val BASE_URL = "https://www.movebank.org/movebank/service/"
     }
 }

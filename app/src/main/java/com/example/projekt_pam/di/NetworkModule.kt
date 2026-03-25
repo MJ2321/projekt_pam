@@ -34,27 +34,16 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(authInterceptor: AuthInterceptor): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.BODY // This will show the error details in Logcat
         }
 
-        // Prosty CookieJar do przechowywania sesji w pamięci RAM
-        val cookieJar = object : CookieJar {
-            private val cookieStore = mutableMapOf<String, List<Cookie>>()
-            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-                cookieStore[url.host] = cookies
-            }
-            override fun loadForRequest(url: HttpUrl): List<Cookie> {
-                return cookieStore[url.host] ?: listOf()
-            }
-        }
-
-        return OkHttpClient.Builder()
-            .cookieJar(cookieJar) // KLUCZOWA ZMIANA: obsługa sesji
+        return OkHttpClient.Builder()// 1. Ensure the AuthInterceptor is first
             .addInterceptor(authInterceptor)
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 WildlifeTracker")
-                    .header("Accept", "application/json")
+                    // 2. Use a standard browser User-Agent
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                    .header("Accept", "application/json, text/plain, */*")
                     .build()
                 chain.proceed(request)
             }
