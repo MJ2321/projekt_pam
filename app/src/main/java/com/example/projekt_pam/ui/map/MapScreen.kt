@@ -75,6 +75,17 @@ fun MapScreen(
                         mapView.overlays.add(marker)
                     }
 
+                    // Własny kod - dodawanie badań jako punkty na mapie
+                    state.studies.forEach { study ->
+                        val marker = Marker(mapView).apply {
+                            position = GeoPoint(study.latitude, study.longitude)
+                            title = study.name
+                            subDescription = "Study ID: ${study.id}"
+                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        }
+                        mapView.overlays.add(marker)
+                    }
+
                     // Rysowanie trasy (Polyline) po kliknięciu
                     if (state.selectedTrack.isNotEmpty()) {
                         val polyline = Polyline().apply {

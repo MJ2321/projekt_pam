@@ -3,6 +3,8 @@ package com.example.projekt_pam.ui.map
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.projekt_pam.domain.model.Individual
+import com.example.projekt_pam.domain.model.Study
+import com.example.projekt_pam.domain.repository.WildlifeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,16 +13,29 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-// Assuming you have a repository and data models defined elsewhere
-// import com.example.projekt_pam.repository.AnimalRepository
-
 @HiltViewModel
 class MapViewModel @Inject constructor(
-    // private val repository: AnimalRepository
+    private val repository: WildlifeRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MapState())
     val state: StateFlow<MapState> = _state.asStateFlow()
+
+    init {
+        loadStudies()
+    }
+
+    private fun loadStudies() {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            val result = repository.getStudies()
+            result.onSuccess { studies ->
+                _state.update { it.copy(studies = studies, isLoading = false) }
+            }.onFailure { e ->
+                _state.update { it.copy(error = e.message, isLoading = false) }
+            }
+        }
+    }
 
     fun onFilterChanged(query: String) {
         _state.update { it.copy(searchQuery = query) }
@@ -46,4 +61,5 @@ class MapViewModel @Inject constructor(
     }
 }
 
-// Supporting data classes if not alread
+// Supporting data classes if not already defined
+
