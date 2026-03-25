@@ -10,7 +10,9 @@ data class Study(
 data class Individual(
     val id: Long,
     val identifier: String,
-    val taxon: String
+    val taxon: String,
+    val lastLat: Double? = null,
+    val lastLon: Double? = null
 )
 
 data class SensorEvent(

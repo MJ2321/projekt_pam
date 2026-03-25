@@ -1,32 +1,39 @@
 package com.example.projekt_pam.data.remote
 
-import com.example.projekt_pam.data.remote.dto.IndividualDto
-import com.example.projekt_pam.data.remote.dto.SensorEventDto
-import com.example.projekt_pam.data.remote.dto.StudyDto
+import okhttp3.ResponseBody
+import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
 
 interface MovebankApi {
-    @GET("json")
-    suspend fun getStudies(
-        @Query("entity_type") entityType: String = "study",
-        @Query("has_study_individual_sensors") hasSensors: Boolean = true
-    ): List<StudyDto>
 
-    @GET("json")
+    @GET("direct-read")
     suspend fun getIndividuals(
         @Query("entity_type") entityType: String = "individual",
-        @Query("study_id") studyId: Long
-    ): List<IndividualDto>
+        @Query("study_id") studyId: Long,
+        @Query("license_accepted") licenseAccepted: Boolean = true
+    ): Response<ResponseBody>
 
-    @GET("json")
+    @GET("direct-read")
     suspend fun getEvents(
         @Query("entity_type") entityType: String = "event",
         @Query("study_id") studyId: Long,
-        @Query("individual_id") individualId: Long? = null
-    ): List<SensorEventDto>
+        @Query("individual_id") individualId: Long? = null,
+        @Query("attributes") attributes: String = "timestamp,location_lat,location_long,individual_id",
+        @Query("license_accepted") licenseAccepted: Boolean = true
+    ): Response<ResponseBody>
+
+    // Pobiera ostatnią znaną pozycję dla KAŻDEGO zwierzęcia w badaniu
+    @GET("direct-read")
+    suspend fun getLatestEventsForAll(
+        @Query("entity_type") entityType: String = "event",
+        @Query("study_id") studyId: Long,
+        @Query("max_events_per_individual") maxEvents: Int = 1,
+        @Query("attributes") attributes: String = "location_lat,location_long,individual_id",
+        @Query("license_accepted") licenseAccepted: Boolean = true
+    ): Response<ResponseBody>
 
     companion object {
-        const val BASE_URL = "https://www.movebank.org/movebank/service/"
+        const val BASE_URL = "https://www.movebank.org/movebank/service/direct-read"
     }
 }

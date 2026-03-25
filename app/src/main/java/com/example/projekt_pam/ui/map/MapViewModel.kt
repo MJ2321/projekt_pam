@@ -19,14 +19,18 @@ class MapViewModel @Inject constructor(
     private val _state = MutableStateFlow(MapState())
     val state = _state.asStateFlow()
 
+    // ID badania: LifeTrack White Stork SW Germany (Tysiące punktów!)
+    private val CURRENT_STUDY_ID = 291157141L
+
     init {
-        // Przykładowe ID badania (studyId) - w realnej apce możnaby je wybierać z listy
-        loadIndividuals(291157141) 
+        loadIndividuals(CURRENT_STUDY_ID) 
     }
 
     fun loadIndividuals(studyId: Long) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
+            
+            // Pobieramy listę osobników
             repository.getIndividuals(studyId)
                 .onSuccess { list ->
                     _state.update { it.copy(
@@ -36,7 +40,10 @@ class MapViewModel @Inject constructor(
                     ) }
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(isLoading = false, error = error.message) }
+                    _state.update { it.copy(
+                        isLoading = false,
+                        error = "Błąd połączenia: ${error.localizedMessage}. Sprawdź internet!"
+                    ) }
                 }
         }
     }

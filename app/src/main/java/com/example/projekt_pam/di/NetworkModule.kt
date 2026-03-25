@@ -8,6 +8,9 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -22,8 +25,7 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideAuthInterceptor(): AuthInterceptor {
-        // Zastąp "user:password" swoimi danymi do Movebank
-        val credentials = "Daniel2137:chujchuj1234"
+        val credentials = "daniel2137:chujchuj1234"
         val base64 = Base64.encodeToString(credentials.toByteArray(), Base64.NO_WRAP)
         return AuthInterceptor(base64)
     }
@@ -34,8 +36,28 @@ object NetworkModule {
         val logging = HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }
+
+        // Prosty CookieJar do przechowywania sesji w pamięci RAM
+        val cookieJar = object : CookieJar {
+            private val cookieStore = mutableMapOf<String, List<Cookie>>()
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                cookieStore[url.host] = cookies
+            }
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                return cookieStore[url.host] ?: listOf()
+            }
+        }
+
         return OkHttpClient.Builder()
+            .cookieJar(cookieJar) // KLUCZOWA ZMIANA: obsługa sesji
             .addInterceptor(authInterceptor)
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 WildlifeTracker")
+                    .header("Accept", "application/json")
+                    .build()
+                chain.proceed(request)
+            }
             .addInterceptor(logging)
             .build()
     }
