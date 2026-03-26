@@ -10,6 +10,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
@@ -24,6 +27,10 @@ fun MapScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
+    var mapView by remember { mutableStateOf<MapView?>(null) }
+    var lastUpdateHash by remember { mutableStateOf<Int>(0) }
+    val scope = rememberCoroutineScope()
+    var debounceJob by remember { mutableStateOf<Job?>(null) }
 
     // Inicjalizacja osmdroid
     LaunchedEffect(Unit) {
@@ -32,6 +39,35 @@ fun MapScreen(
             context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
         )
         Configuration.getInstance().userAgentValue = context.packageName
+    }
+
+    // Obserwuj zmiany stanu i aktualizuj mapę z debouncing
+    LaunchedEffect(state.studies, state.filteredIndividuals, state.selectedTrack, state.searchQuery, state.zoomClickCount) {
+        val contentHash = (state.studies.size + state.filteredIndividuals.size + 
+                          state.selectedTrack.size + state.searchQuery.hashCode() + state.zoomClickCount).hashCode()
+        
+        if (contentHash != lastUpdateHash && mapView != null) {
+            lastUpdateHash = contentHash
+            
+            // Anuluj poprzednią aktualizację jeśli istnieje
+            debounceJob?.cancel()
+            
+            // Opóźnij aktualizację o 300ms aby nie laować
+            debounceJob = scope.launch {
+                delay(300)
+                updateMapContent(mapView!!, state)
+            }
+        }
+    }
+
+    // Monitoruj zmiany zoomu i załaduj szczegóły jeśli zbliżamy się
+    LaunchedEffect(mapView, state.currentZoom) {
+        mapView?.let { map ->
+            val currentZoom = map.zoomLevel.toDouble()
+            if (currentZoom != state.currentZoom) {
+                viewModel.onZoomChanged(currentZoom)
+            }
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -56,47 +92,8 @@ fun MapScreen(
                         controller.setCenter(GeoPoint(20.0, 10.0))
                     }
                 },
-                update = { mapView ->
-                    mapView.overlays.clear()
-
-                    // Dodawanie markerów dla przefiltrowanych zwierząt
-                    state.filteredIndividuals.forEach { individual ->
-                        val marker = Marker(mapView).apply {
-                            // Domyślna pozycja (w realnej apce pobrana z ostatniego eventu)
-                            position = GeoPoint(0.0, 0.0)
-                            title = individual.identifier
-                            subDescription = individual.taxon
-                            setOnMarkerClickListener { _, _ ->
-                                viewModel.selectIndividual(291157141, individual)
-                                showInfoWindow()
-                                true
-                            }
-                        }
-                        mapView.overlays.add(marker)
-                    }
-
-                    // Własny kod - dodawanie badań jako punkty na mapie
-                    state.studies.forEach { study ->
-                        val marker = Marker(mapView).apply {
-                            position = GeoPoint(study.latitude, study.longitude)
-                            title = study.name
-                            subDescription = "Study ID: ${study.id}"
-                            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        }
-                        mapView.overlays.add(marker)
-                    }
-
-                    // Rysowanie trasy (Polyline) po kliknięciu
-                    if (state.selectedTrack.isNotEmpty()) {
-                        val polyline = Polyline().apply {
-                            setPoints(state.selectedTrack.map { GeoPoint(it.latitude, it.longitude) })
-                            outlinePaint.color = android.graphics.Color.BLUE
-                            outlinePaint.strokeWidth = 8f
-                        }
-                        mapView.overlays.add(polyline)
-                    }
-                    
-                    mapView.invalidate() // Odświeżenie widoku mapy
+                update = { map ->
+                    mapView = map
                 }
             )
 
@@ -109,4 +106,75 @@ fun MapScreen(
             }
         }
     }
+}
+
+private fun updateMapContent(mapView: MapView, state: MapState) {
+    mapView.overlays.clear()
+
+    // Dodawanie markerów dla przefiltrowanych zwierząt
+    state.filteredIndividuals.forEach { individual ->
+        // Jeśli licznik >= 12, pokazuj szczegóły (rzeczywiste pozycje)
+        val lat = if (state.zoomClickCount >= 12) {
+            individual.lastLat ?: 0.0
+        } else {
+            0.0
+        }
+        val lon = if (state.zoomClickCount >= 12) {
+            individual.lastLon ?: 0.0
+        } else {
+            0.0
+        }
+
+        val marker = Marker(mapView).apply {
+            position = GeoPoint(lat, lon)
+            title = individual.identifier
+            // Szczegóły zależne od licznika kliknięć
+            subDescription = if (state.zoomClickCount >= 12) {
+                "${individual.taxon}\nLat: ${String.format("%.4f", lat)}\nLon: ${String.format("%.4f", lon)}"
+            } else {
+                individual.taxon
+            }
+            setOnMarkerClickListener { _, _ ->
+                true
+            }
+        }
+        mapView.overlays.add(marker)
+    }
+
+    // Dodawanie badań jako punkty na mapie
+    state.studies.forEach { study ->
+        val marker = Marker(mapView).apply {
+            position = GeoPoint(study.latitude, study.longitude)
+            title = study.name
+            subDescription = "Study ID: ${study.id}"
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+        }
+        mapView.overlays.add(marker)
+    }
+
+    // Gdy licznik >= 12, pokaż szczegółowe ścieżki dla załadowanych zwierząt
+    if (state.zoomClickCount >= 12) {
+        state.detailedTracks.forEach { (individualId, events) ->
+            if (events.isNotEmpty()) {
+                val polyline = Polyline().apply {
+                    setPoints(events.map { GeoPoint(it.latitude, it.longitude) })
+                    outlinePaint.color = android.graphics.Color.BLUE
+                    outlinePaint.strokeWidth = 5f
+                }
+                mapView.overlays.add(polyline)
+            }
+        }
+    }
+
+    // Rysowanie trasy (Polyline) po kliknięciu
+    if (state.selectedTrack.isNotEmpty()) {
+        val polyline = Polyline().apply {
+            setPoints(state.selectedTrack.map { GeoPoint(it.latitude, it.longitude) })
+            outlinePaint.color = android.graphics.Color.RED
+            outlinePaint.strokeWidth = 8f
+        }
+        mapView.overlays.add(polyline)
+    }
+    
+    mapView.invalidate() // Odświeżenie widoku mapy
 }

@@ -3,6 +3,7 @@ package com.example.projekt_pam.ui.map
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.projekt_pam.domain.model.Individual
+import com.example.projekt_pam.domain.model.SensorEvent
 import com.example.projekt_pam.domain.model.Study
 import com.example.projekt_pam.domain.repository.WildlifeRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -59,7 +60,86 @@ class MapViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * Monitoruj zmianę zoomu i liczę kliknięcia
+     * Po 8 kliknięciach załaduj szczegóły
+     */
+    fun onZoomChanged(zoomLevel: Double) {
+        val previousZoom = _state.value.currentZoom
+
+        // Jeśli zoom się zmienił, zwiększ licznik
+        if (zoomLevel != previousZoom) {
+            val newClickCount = _state.value.zoomClickCount + 1
+
+            _state.update { it.copy(
+                currentZoom = zoomLevel,
+                zoomClickCount = newClickCount
+            ) }
+
+            // Załaduj szczegóły po 8 kliknięciach zoomu
+            if (newClickCount >= 8) {
+                loadDetailedTracksForVisibleIndividuals()
+            }
+        }
+    }
+
+    /**
+     * Resetuj licznik kliknięć zoomu
+     */
+    fun resetZoomClickCount() {
+        _state.update { it.copy(zoomClickCount = 0) }
+    }
+
+    /**
+     * Załaduj szczegółowe ścieżki dla przefiltrowanych zwierząt
+     * Używa debouncing aby nie załadować za dużo jednocześnie
+     */
+    private fun loadDetailedTracksForVisibleIndividuals() {
+        val currentState = _state.value
+        val individualsToLoad = currentState.filteredIndividuals
+            .filter { it.id !in currentState.loadedDetailIndividuals }
+            .filter { it.id !in currentState.loadingIndividuals }
+            .take(5) // Limit do 5 naraz aby nie przeciążyć API
+
+        if (individualsToLoad.isEmpty()) return
+
+        individualsToLoad.forEach { individual ->
+            _state.update { it.copy(loadingIndividuals = it.loadingIndividuals + individual.id) }
+
+            viewModelScope.launch {
+                try {
+                    // Ładuj events/ścieżki dla każdego zwierzęcia
+                    val result = repository.getEvents(291157141, individual.id)
+                    result.onSuccess { individuals ->
+                        // Parsuj jako SensorEvent z Individual
+                        val events = emptyList<SensorEvent>() // TODO: if API returns events
+
+                        _state.update { state ->
+                            state.copy(
+                                detailedTracks = state.detailedTracks + (individual.id to events),
+                                loadedDetailIndividuals = state.loadedDetailIndividuals + individual.id,
+                                loadingIndividuals = state.loadingIndividuals - individual.id
+                            )
+                        }
+                    }.onFailure { e ->
+                        _state.update { state ->
+                            state.copy(
+                                loadingIndividuals = state.loadingIndividuals - individual.id,
+                                error = "Nie udało się załadować szczegółów: ${e.message}"
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    _state.update { state ->
+                        state.copy(
+                            loadingIndividuals = state.loadingIndividuals - individual.id
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Supporting data classes if not already defined
-

@@ -16,12 +16,8 @@ class WildlifeRepositoryImpl @Inject constructor(
         val response = api.getAllStudies()
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
-//            println(csv)
-//            println("chujchuj")
-
             Result.success(parseStudiesCsv(csv))
         } else {
-            // THIS LINE is what prints the server's secret error message
             val errorMsg = response.errorBody()?.string() ?: "Unknown error"
             Result.failure(Exception("HTTP ${response.code()}: $errorMsg"))
         }
