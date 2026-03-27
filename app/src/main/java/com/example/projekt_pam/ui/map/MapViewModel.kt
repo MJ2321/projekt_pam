@@ -19,8 +19,13 @@ class MapViewModel @Inject constructor(
     private val repository: WildlifeRepository
 ) : ViewModel() {
 
+    private companion object {
+        const val DEFAULT_STUDY_ID = 291157141L
+    }
+
     private val _state = MutableStateFlow(MapState())
     val state: StateFlow<MapState> = _state.asStateFlow()
+    private var individualsLoaded = false
 
     init {
         loadStudies()
@@ -39,8 +44,59 @@ class MapViewModel @Inject constructor(
     }
 
     fun onFilterChanged(query: String) {
-        _state.update { it.copy(searchQuery = query) }
-        // Add logic to filter state.filteredIndividuals here
+        val normalizedQuery = query.trim()
+
+        if (normalizedQuery.isNotBlank() && !individualsLoaded) {
+            loadIndividuals(DEFAULT_STUDY_ID)
+        }
+
+        _state.update { state ->
+            state.copy(
+                searchQuery = query,
+                filteredIndividuals = filterIndividuals(state.individuals, normalizedQuery),
+                error = null
+            )
+        }
+    }
+
+    fun onSuggestionSelected(individualId: Long) {
+        _state.update { state ->
+            val selected = state.individuals.firstOrNull { it.id == individualId } ?: return@update state
+            state.copy(
+                searchQuery = selected.identifier,
+                filteredIndividuals = listOf(selected),
+                error = null
+            )
+        }
+    }
+
+    private fun loadIndividuals(studyId: Long) {
+        viewModelScope.launch {
+            val result = repository.getIndividuals(studyId)
+            result.onSuccess { individuals ->
+                individualsLoaded = true
+                _state.update { state ->
+                    state.copy(
+                        individuals = individuals,
+                        filteredIndividuals = filterIndividuals(individuals, state.searchQuery.trim()),
+                        error = null
+                    )
+                }
+            }.onFailure { e ->
+                _state.update { it.copy(error = e.message, filteredIndividuals = emptyList()) }
+            }
+        }
+    }
+
+    private fun filterIndividuals(
+        individuals: List<Individual>,
+        query: String
+    ): List<Individual> {
+        if (query.isBlank()) return emptyList()
+        return individuals.filter { individual ->
+            individual.identifier.contains(query, ignoreCase = true) ||
+                individual.taxon.contains(query, ignoreCase = true)
+        }
     }
 
     /**

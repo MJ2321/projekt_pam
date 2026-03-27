@@ -6,19 +6,25 @@ import com.example.projekt_pam.domain.model.SensorEvent
 import com.example.projekt_pam.domain.model.Study
 import com.example.projekt_pam.domain.repository.WildlifeRepository
 import okhttp3.ResponseBody
+import retrofit2.Response
 import javax.inject.Inject
 
 class WildlifeRepositoryImpl @Inject constructor(
     private val api: MovebankApi
 ) : WildlifeRepository {
 
+    private companion object {
+        const val MAX_RETRIES_ON_429 = 2
+        const val INITIAL_BACKOFF_MS = 1_000L
+    }
+
     override suspend fun getStudies(): Result<List<Study>> = try {
-        val response = api.getAllStudies()
+        val response = executeWithRateLimitRetry { api.getAllStudies() }
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
             Result.success(parseStudiesCsv(csv))
         } else {
-            val errorMsg = response.errorBody()?.string() ?: "Unknown error"
+            val errorMsg = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
             Result.failure(Exception("HTTP ${response.code()}: $errorMsg"))
         }
     } catch (e: Exception) {
@@ -26,33 +32,61 @@ class WildlifeRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getIndividuals(studyId: Long): Result<List<Individual>> = try {
-        val response = api.getIndividuals(studyId = studyId)
+        val response = executeWithRateLimitRetry { api.getIndividuals(studyId = studyId) }
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
             val individuals = parseIndividualsCsv(csv)
             Result.success(individuals)
         } else {
-            Result.failure(Exception("Error: ${response.code()}"))
+            val errorMsg = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
+            Result.failure(Exception("HTTP ${response.code()}: $errorMsg"))
         }
     } catch (e: Exception) {
         Result.failure(e)
     }
 
     override suspend fun getEvents(studyId: Long, individualId: Long?): Result<List<Individual>> = try {
-        val response = api.getEvents(studyId = studyId, individualId = individualId)
-        // Example for getIndividuals (do this for all methods: getStudies, getIndividuals, getEvents)
+        val response = executeWithRateLimitRetry { api.getEvents(studyId = studyId, individualId = individualId) }
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
             val individuals = parseIndividualsCsv(csv)
             Result.success(individuals)
         } else {
-            // Extract the actual error text from the server body
-            val errorBody = response.errorBody()?.string() ?: "Unknown Server Error"
-            // Create a detailed exception
+            val errorBody = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
             Result.failure(Exception("HTTP ${response.code()}: $errorBody"))
         }
     } catch (e: Exception) {
         Result.failure(e)
+    }
+
+    private suspend fun executeWithRateLimitRetry(
+        request: suspend () -> Response<ResponseBody>
+    ): Response<ResponseBody> {
+        var attempt = 0
+        var backoffMs = INITIAL_BACKOFF_MS
+
+        while (true) {
+            val response = request()
+            if (response.code() != 429 || attempt >= MAX_RETRIES_ON_429) {
+                return response
+            }
+
+            val retryAfterSeconds = response.headers()["Retry-After"]?.toLongOrNull()
+            response.errorBody()?.close()
+            response.body()?.close()
+
+            kotlinx.coroutines.delay(retryAfterSeconds?.times(1_000L) ?: backoffMs)
+            backoffMs *= 2
+            attempt++
+        }
+    }
+
+    private fun rateLimitFriendlyMessage(code: Int): String {
+        return if (code == 429) {
+            "Za dużo zapytań do serwera (HTTP 429). Odczekaj chwilę i spróbuj ponownie."
+        } else {
+            "Unknown Server Error"
+        }
     }
 
     private fun parseStudiesCsv(csv: String): List<Study> {
