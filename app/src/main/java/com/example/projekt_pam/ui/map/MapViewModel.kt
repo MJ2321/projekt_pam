@@ -99,19 +99,95 @@ class MapViewModel @Inject constructor(
         }
     }
 
-    /**
-     * This is the missing function causing your error.
-     */
+    fun onMarkerSelected(individual: Individual) {
+        _state.update {
+            it.copy(
+                selectedIndividual = individual,
+                selectedStudy = null,
+                selectedTrack = emptyList(),
+                isTrackMode = false,
+                error = null
+            )
+        }
+    }
+
+    fun onStudyMarkerSelected(study: Study) {
+        _state.update {
+            it.copy(
+                selectedStudy = study,
+                selectedIndividual = null,
+                selectedTrack = emptyList(),
+                isTrackMode = false,
+                error = null
+            )
+        }
+    }
+
     fun selectIndividual(studyId: Long, individual: Individual) {
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true) }
-            try {
-                // Replace this with your actual API/Repository call
-                // val track = repository.getTrack(studyId, individual.id)
+            _state.update {
+                it.copy(
+                    selectedIndividual = individual,
+                    selectedStudy = null,
+                    selectedTrack = emptyList(),
+                    isTrackMode = false,
+                    error = null
+                )
+            }
+        }
+    }
 
-                // Example: updating the state with the selected track
-                // _state.update { it.copy(selectedTrack = track, isLoading = false) }
-            } catch (e: Exception) {
+    fun onShowTrackClicked() {
+        val selectedStudy = _state.value.selectedStudy ?: return
+        showTrackForStudy(selectedStudy)
+    }
+
+    fun showTrackForStudy(study: Study) {
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    selectedStudy = study,
+                    selectedIndividual = null,
+                    isTrackMode = true,
+                    selectedTrack = emptyList(),
+                    isLoading = true,
+                    error = null
+                )
+            }
+            val result = repository.getEvents(study.id, null)
+            result.onSuccess { events ->
+                if (events.isEmpty()) {
+                    _state.update {
+                        it.copy(
+                            selectedTrack = emptyList(),
+                            isLoading = false,
+                            error = "Brak danych trasy dla wybranego badania."
+                        )
+                    }
+                } else {
+                    _state.update { it.copy(selectedTrack = events, isLoading = false) }
+                }
+            }.onFailure { e ->
+                _state.update { it.copy(error = e.message, isLoading = false) }
+            }
+        }
+    }
+
+    fun showTrackFor(individual: Individual) {
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    selectedIndividual = individual,
+                    selectedStudy = null,
+                    isTrackMode = true,
+                    selectedTrack = emptyList(),
+                    isLoading = true
+                )
+            }
+            val result = repository.getEvents(DEFAULT_STUDY_ID, individual.id)
+            result.onSuccess { events ->
+                _state.update { it.copy(selectedTrack = events, isLoading = false) }
+            }.onFailure { e ->
                 _state.update { it.copy(error = e.message, isLoading = false) }
             }
         }
@@ -166,11 +242,8 @@ class MapViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     // Ładuj events/ścieżki dla każdego zwierzęcia
-                    val result = repository.getEvents(291157141, individual.id)
-                    result.onSuccess { individuals ->
-                        // Parsuj jako SensorEvent z Individual
-                        val events = emptyList<SensorEvent>() // TODO: if API returns events
-
+                    val result = repository.getEvents(DEFAULT_STUDY_ID, individual.id)
+                    result.onSuccess { events ->
                         _state.update { state ->
                             state.copy(
                                 detailedTracks = state.detailedTracks + (individual.id to events),

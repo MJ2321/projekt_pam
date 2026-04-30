@@ -1,15 +1,20 @@
 package com.example.projekt_pam.ui.map
 
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.projekt_pam.domain.model.Individual
+import com.example.projekt_pam.domain.model.Study
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -45,9 +50,10 @@ fun MapScreen(
     }
 
     // Obserwuj zmiany stanu i aktualizuj mapę z debouncing
-    LaunchedEffect(state.studies, state.filteredIndividuals, state.selectedTrack, state.searchQuery, state.zoomClickCount) {
-        val contentHash = (state.studies.size + state.filteredIndividuals.size + 
-                          state.selectedTrack.size + state.searchQuery.hashCode() + state.zoomClickCount).hashCode()
+    LaunchedEffect(mapView, state.studies, state.filteredIndividuals, state.selectedTrack, state.searchQuery, state.zoomClickCount, state.selectedStudy, state.isTrackMode) {
+        val contentHash = (state.studies.size + state.filteredIndividuals.size +
+                          state.selectedTrack.size + state.searchQuery.hashCode() + state.zoomClickCount +
+                          (state.selectedStudy?.id?.hashCode() ?: 0) + state.isTrackMode.hashCode()).hashCode()
         
         if (contentHash != lastUpdateHash && mapView != null) {
             lastUpdateHash = contentHash
@@ -58,7 +64,7 @@ fun MapScreen(
             // Opóźnij aktualizację o 300ms aby nie laować
             debounceJob = scope.launch {
                 delay(300)
-                updateMapContent(mapView!!, state)
+                updateMapContent(mapView!!, state, viewModel::onMarkerSelected, viewModel::showTrackFor, viewModel::onStudyMarkerSelected)
             }
         }
     }
@@ -90,6 +96,14 @@ fun MapScreen(
         }
     }
 
+    // Centruj mapę na pierwszym punkcie trasy
+    LaunchedEffect(state.selectedTrack, mapView) {
+        if (state.selectedTrack.isNotEmpty()) {
+            val first = state.selectedTrack.first()
+            mapView?.controller?.animateTo(GeoPoint(first.latitude, first.longitude))
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
@@ -117,7 +131,9 @@ fun MapScreen(
                 .weight(1f)
         ) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(0f),
                 factory = { ctx ->
                     MapView(ctx).apply {
                         setTileSource(TileSourceFactory.MAPNIK)
@@ -135,8 +151,35 @@ fun MapScreen(
                 }
             )
 
+            val isSelected = state.selectedStudy != null
+
+            Button(
+                onClick = { viewModel.onShowTrackClicked() },
+                enabled = isSelected,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSelected) Color(0xFF2E7D32) else Color(0xFFE0E0E0),
+                    contentColor = if (isSelected) Color.White else Color(0xFF616161)
+                ),
+                border = if (isSelected) BorderStroke(2.dp, Color(0xFF1B5E20)) else null,
+                elevation = ButtonDefaults.buttonElevation(
+                    defaultElevation = if (isSelected) 8.dp else 0.dp,
+                    pressedElevation = if (isSelected) 12.dp else 0.dp
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 24.dp)
+                    .navigationBarsPadding()
+                    .zIndex(100f)
+            ) {
+                Text("Wyświetl trasę")
+            }
+
             if (state.isLoading) {
-                CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .zIndex(1f)
+                )
             }
             
             state.error?.let { rawError ->
@@ -148,19 +191,41 @@ fun MapScreen(
                 } else {
                     rawError
                 }
-                Text(text = "Error: $displayError", color = Color.Red, modifier = Modifier.padding(16.dp))
+                Text(
+                    text = "Error: $displayError",
+                    color = Color.Red,
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .zIndex(1f)
+                )
             }
         }
     }
 }
 
-private fun updateMapContent(mapView: MapView, state: MapState) {
+private fun updateMapContent(
+    mapView: MapView,
+    state: MapState,
+    onMarkerSelected: (Individual) -> Unit,
+    onShowTrack: (Individual) -> Unit,
+    onStudySelected: (Study) -> Unit
+) {
     mapView.overlays.clear()
 
     val isSearchActive = state.searchQuery.trim().isNotEmpty()
+    var infoWindow = AnimalInfoWindow(mapView, onShowTrack)
 
-    // Przy aktywnym searchu pokazujemy tylko zwierzęta i ich lokalizacje.
-    if (isSearchActive) {
+    if (state.isTrackMode && state.selectedStudy != null) {
+        val study = state.selectedStudy
+        val marker = Marker(mapView).apply {
+            position = GeoPoint(study.latitude, study.longitude)
+            title = study.name
+            subDescription = "Study ID: ${study.id}"
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+        }
+        mapView.overlays.add(marker)
+    } else if (isSearchActive) {
+        // Przy aktywnym searchu pokazujemy tylko zwierzęta i ich lokalizacje.
         state.filteredIndividuals.forEach { individual ->
             val lat = individual.lastLat ?: return@forEach
             val lon = individual.lastLon ?: return@forEach
@@ -169,7 +234,11 @@ private fun updateMapContent(mapView: MapView, state: MapState) {
                 position = GeoPoint(lat, lon)
                 title = individual.identifier
                 subDescription = "${individual.taxon}\nLat: ${String.format(Locale.US, "%.4f", lat)}\nLon: ${String.format(Locale.US, "%.4f", lon)}"
-                setOnMarkerClickListener { _, _ ->
+                relatedObject = individual
+                infoWindow = infoWindow
+                setOnMarkerClickListener { clicked, _ ->
+                    onMarkerSelected(individual)
+                    clicked.showInfoWindow()
                     true
                 }
             }
@@ -196,6 +265,11 @@ private fun updateMapContent(mapView: MapView, state: MapState) {
                 title = study.name
                 subDescription = "Study ID: ${study.id}"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setOnMarkerClickListener { clicked, _ ->
+                    onStudySelected(study)
+                    clicked.showInfoWindow()
+                    true
+                }
             }
             mapView.overlays.add(marker)
         }
@@ -203,12 +277,22 @@ private fun updateMapContent(mapView: MapView, state: MapState) {
 
     // Rysowanie trasy (Polyline) po kliknięciu
     if (state.selectedTrack.isNotEmpty()) {
-        val polyline = Polyline().apply {
-            setPoints(state.selectedTrack.map { GeoPoint(it.latitude, it.longitude) })
-            outlinePaint.color = android.graphics.Color.RED
-            outlinePaint.strokeWidth = 8f
+        val tracksByIndividual = state.selectedTrack
+            .groupBy { it.individualId }
+            .entries
+            .take(5)
+
+        tracksByIndividual.forEach { (_, events) ->
+            val points = events.take(500).map { GeoPoint(it.latitude, it.longitude) }
+            if (points.size > 1) {
+                val polyline = Polyline().apply {
+                    setPoints(points)
+                    outlinePaint.color = android.graphics.Color.RED
+                    outlinePaint.strokeWidth = 6f
+                }
+                mapView.overlays.add(polyline)
+            }
         }
-        mapView.overlays.add(polyline)
     }
     
     mapView.invalidate() // Odświeżenie widoku mapy

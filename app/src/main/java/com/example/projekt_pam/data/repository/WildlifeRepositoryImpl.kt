@@ -45,12 +45,12 @@ class WildlifeRepositoryImpl @Inject constructor(
         Result.failure(e)
     }
 
-    override suspend fun getEvents(studyId: Long, individualId: Long?): Result<List<Individual>> = try {
+    override suspend fun getEvents(studyId: Long, individualId: Long?): Result<List<SensorEvent>> = try {
         val response = executeWithRateLimitRetry { api.getEvents(studyId = studyId, individualId = individualId) }
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
-            val individuals = parseIndividualsCsv(csv)
-            Result.success(individuals)
+            val events = parseEventsCsv(csv, individualId ?: 0L)
+            Result.success(events)
         } else {
             val errorBody = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
             Result.failure(Exception("HTTP ${response.code()}: $errorBody"))
@@ -154,16 +154,19 @@ class WildlifeRepositoryImpl @Inject constructor(
         val tsIdx = headers.indexOf("timestamp")
         val indIdIdx = headers.indexOf("individual_id")
 
+        // Jeśli brakuje wymaganych kolumn, nie próbuj parsować
+        if (latIdx == -1 || lonIdx == -1) return emptyList()
+
         return lines.drop(1).mapNotNull { line ->
-            val cols = line.split(",")
+            val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
             if (cols.size > maxOf(latIdx, lonIdx, tsIdx)) {
                 val lat = cols[latIdx].toDoubleOrNull()
                 val lon = cols[lonIdx].toDoubleOrNull()
                 if (lat != null && lon != null) {
                     SensorEvent(
-                        latitude = lat,      // Matches your Models.kt
-                        longitude = lon,     // Matches your Models.kt
-                        timestamp = 0L,      // Matches your Models.kt
+                        latitude = lat,
+                        longitude = lon,
+                        timestamp = if (tsIdx != -1 && tsIdx < cols.size) 0L else 0L,
                         individualId = if (indIdIdx != -1 && indIdIdx < cols.size)
                             cols[indIdIdx].toLongOrNull() ?: requestedIndividualId
                         else requestedIndividualId
