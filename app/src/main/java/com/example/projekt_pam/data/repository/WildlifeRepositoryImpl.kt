@@ -79,16 +79,25 @@ class WildlifeRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getStudyTracks(studyId: Long, licenseMd5: String?): Resource<List<AnimalTrack>> {
-        val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&max_events_per_individual=2000"
+        val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&max_events_per_individual=2000&attributes=timestamp,location_lat,location_long,individual_id"
         val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
         return try {
             val response = api.getEvents(url)
 
             if (response.isSuccessful) {
-                val responseBody = response.body()?.string() ?: ""
+                val responseBody = response.body()?.string()?.trim() ?: ""
+                
                 if (responseBody.contains("License Terms:")) {
                     return Resource.LicenseRequired(responseBody)
+                }
+
+                if (responseBody.startsWith("<p>No")) {
+                    return Resource.Error("Brak uprawnień lub brak danych (odmowa dostępu).")
+                }
+
+                if (responseBody.isEmpty()) {
+                    return Resource.Success(emptyList())
                 }
 
                 val tracks = parseTracks(responseBody)
@@ -248,18 +257,30 @@ class WildlifeRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun parseTracks(jsonString: String): List<AnimalTrack> {
-        // Assuming the response is a JSON array of events
-        val events = org.json.JSONArray(jsonString)
+    private fun parseTracks(csvString: String): List<AnimalTrack> {
+        val lines = csvString.lineSequence().filter { it.isNotBlank() }.toList()
+        if (lines.size < 2) return emptyList()
+
+        val headers = lines[0].split(",")
+        val latIdx = headers.indexOf("location_lat")
+        val lonIdx = headers.indexOf("location_long")
+        val indIdIdx = headers.indexOf("individual_id")
+
+        if (latIdx == -1 || lonIdx == -1 || indIdIdx == -1) return emptyList()
+
         val locationsByIndividual = mutableMapOf<Long, MutableList<Location>>()
 
-        for (i in 0 until events.length()) {
-            val event = events.getJSONObject(i)
-            val individualId = event.getLong("individual_id")
-            val lat = event.getDouble("location_lat")
-            val lon = event.getDouble("location_long")
+        lines.drop(1).forEach { line ->
+            val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
+            if (cols.size > maxOf(latIdx, lonIdx, indIdIdx)) {
+                val lat = cols[latIdx].toDoubleOrNull()
+                val lon = cols[lonIdx].toDoubleOrNull()
+                val individualId = cols[indIdIdx].toLongOrNull()
 
-            locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+                if (lat != null && lon != null && individualId != null) {
+                    locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+                }
+            }
         }
 
         return locationsByIndividual.map { (id, locations) ->

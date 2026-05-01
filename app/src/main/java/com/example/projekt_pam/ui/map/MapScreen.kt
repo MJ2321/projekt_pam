@@ -12,6 +12,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.projekt_pam.domain.model.Individual
 import com.example.projekt_pam.domain.model.Study
@@ -209,6 +211,34 @@ fun MapScreen(
                     modifier = Modifier
                         .padding(16.dp)
                         .zIndex(1f)
+                )
+            }
+
+            // Obsługa dialogu licencji
+            if (state.licenseDialog.show) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.onLicenseDeclined() },
+                    title = { Text("Wymagana akceptacja licencji") },
+                    text = {
+                        val scrollState = rememberScrollState()
+                        Column(modifier = Modifier.verticalScroll(scrollState)) {
+                            // Konwertowanie HTML z licencji na czysty tekst
+                            Text(text = android.text.Html.fromHtml(
+                                state.licenseDialog.licenseText, 
+                                android.text.Html.FROM_HTML_MODE_COMPACT
+                            ).toString())
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.onLicenseAccepted() }) {
+                            Text("Akceptuj")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.onLicenseDeclined() }) {
+                            Text("Odrzuć")
+                        }
+                    }
                 )
             }
         }

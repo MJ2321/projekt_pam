@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import java.security.MessageDigest
 
 @HiltViewModel
 class MapViewModel @Inject constructor(
@@ -162,12 +163,16 @@ class MapViewModel @Inject constructor(
             _state.update { it.copy(isLoading = true) }
             when (val resource = repository.getStudyTracks(studyId, licenseMd5)) {
                 is Resource.Success -> {
+                    val tracks = resource.data ?: emptyList()
+                    
+
                     _state.update {
                         it.copy(
-                            animalTracks = resource.data ?: emptyList(),
+                            animalTracks = tracks,
                             isLoading = false,
                             // Clear old tracks from other modes
-                            selectedTrack = emptyList()
+                            selectedTrack = emptyList(),
+                            isTrackMode = true // Wymusza wejście w tryb rysowania i chowania pozostałych punktów, jeśli chcemy to zachować
                         )
                     }
                 }
@@ -196,9 +201,15 @@ class MapViewModel @Inject constructor(
     fun onLicenseAccepted() {
         val dialogState = _state.value.licenseDialog
         if (dialogState.show && dialogState.studyId != null) {
-            // Hide dialog and re-fetch with MD5 hash (repository handles the hash calculation)
+            val md5 = calculateMd5(dialogState.licenseText)
             _state.update { it.copy(licenseDialog = LicenseDialogState(show = false)) }
-            fetchTracksForStudy(dialogState.studyId) // The repository will now handle the license text
+            fetchTracksForStudy(dialogState.studyId, md5) 
+        }
+    }
+
+    private fun calculateMd5(input: String): String {
+        return MessageDigest.getInstance("MD5").digest(input.toByteArray()).joinToString("") {
+            "%02x".format(it)
         }
     }
 
