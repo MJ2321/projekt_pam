@@ -6,6 +6,7 @@ import com.example.projekt_pam.domain.model.Individual
 import com.example.projekt_pam.domain.model.SensorEvent
 import com.example.projekt_pam.domain.model.Study
 import com.example.projekt_pam.domain.repository.WildlifeRepository
+import com.example.projekt_pam.util.Resource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,11 +35,17 @@ class MapViewModel @Inject constructor(
     private fun loadStudies() {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
-            val result = repository.getStudies()
-            result.onSuccess { studies ->
-                _state.update { it.copy(studies = studies, isLoading = false) }
-            }.onFailure { e ->
-                _state.update { it.copy(error = e.message, isLoading = false) }
+            when (val resource = repository.getStudies()) {
+                is Resource.Success -> {
+                    _state.update { it.copy(studies = resource.data ?: emptyList(), isLoading = false) }
+                }
+                is Resource.Error -> {
+                    _state.update { it.copy(error = resource.message, isLoading = false) }
+                }
+                else -> {
+                    // Handle other cases if necessary, e.g. Loading
+                    _state.update { it.copy(isLoading = false) }
+                }
             }
         }
     }
@@ -72,18 +79,21 @@ class MapViewModel @Inject constructor(
 
     private fun loadIndividuals(studyId: Long) {
         viewModelScope.launch {
-            val result = repository.getIndividuals(studyId)
-            result.onSuccess { individuals ->
-                individualsLoaded = true
-                _state.update { state ->
-                    state.copy(
-                        individuals = individuals,
-                        filteredIndividuals = filterIndividuals(individuals, state.searchQuery.trim()),
-                        error = null
-                    )
+            when (val resource = repository.getIndividuals(studyId)) {
+                is Resource.Success -> {
+                    individualsLoaded = true
+                    _state.update { state ->
+                        state.copy(
+                            individuals = resource.data ?: emptyList(),
+                            filteredIndividuals = filterIndividuals(resource.data ?: emptyList(), state.searchQuery.trim()),
+                            error = null
+                        )
+                    }
                 }
-            }.onFailure { e ->
-                _state.update { it.copy(error = e.message, filteredIndividuals = emptyList()) }
+                is Resource.Error -> {
+                    _state.update { it.copy(error = resource.message, filteredIndividuals = emptyList()) }
+                }
+                else -> {}
             }
         }
     }
@@ -139,9 +149,66 @@ class MapViewModel @Inject constructor(
 
     fun onShowTrackClicked() {
         val selectedStudy = _state.value.selectedStudy ?: return
-        showTrackForStudy(selectedStudy)
+        if (selectedStudy.accessType == com.example.projekt_pam.domain.model.AccessType.VIEW_ONLY) {
+            _state.update { it.copy(error = "This study's tracks can only be viewed directly on Movebank.org. Contact the owner for download access.") }
+            return
+        }
+        // This function will now use the new track fetching logic
+        fetchTracksForStudy(selectedStudy.id)
     }
 
+    private fun fetchTracksForStudy(studyId: Long, licenseMd5: String? = null) {
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            when (val resource = repository.getStudyTracks(studyId, licenseMd5)) {
+                is Resource.Success -> {
+                    _state.update {
+                        it.copy(
+                            animalTracks = resource.data ?: emptyList(),
+                            isLoading = false,
+                            // Clear old tracks from other modes
+                            selectedTrack = emptyList()
+                        )
+                    }
+                }
+                is Resource.Error -> {
+                    _state.update { it.copy(error = resource.message, isLoading = false) }
+                }
+                is Resource.LicenseRequired -> {
+                    _state.update {
+                        it.copy(
+                            isLoading = false,
+                            licenseDialog = LicenseDialogState(
+                                show = true,
+                                studyId = studyId,
+                                licenseText = resource.message ?: ""
+                            )
+                        )
+                    }
+                }
+                is Resource.Loading -> {
+                    // Already handled by the initial state update
+                }
+            }
+        }
+    }
+
+    fun onLicenseAccepted() {
+        val dialogState = _state.value.licenseDialog
+        if (dialogState.show && dialogState.studyId != null) {
+            // Hide dialog and re-fetch with MD5 hash (repository handles the hash calculation)
+            _state.update { it.copy(licenseDialog = LicenseDialogState(show = false)) }
+            fetchTracksForStudy(dialogState.studyId) // The repository will now handle the license text
+        }
+    }
+
+    fun onLicenseDeclined() {
+        _state.update { it.copy(licenseDialog = LicenseDialogState(show = false)) }
+    }
+    
+    // This function is now obsolete, fetchTracksForStudy is used instead.
+    // I'm removing it to avoid confusion.
+    /*
     fun showTrackForStudy(study: Study) {
         viewModelScope.launch {
             _state.update {
@@ -172,6 +239,7 @@ class MapViewModel @Inject constructor(
             }
         }
     }
+    */
 
     fun showTrackFor(individual: Individual) {
         viewModelScope.launch {
@@ -184,11 +252,16 @@ class MapViewModel @Inject constructor(
                     isLoading = true
                 )
             }
-            val result = repository.getEvents(DEFAULT_STUDY_ID, individual.id)
-            result.onSuccess { events ->
-                _state.update { it.copy(selectedTrack = events, isLoading = false) }
-            }.onFailure { e ->
-                _state.update { it.copy(error = e.message, isLoading = false) }
+            when (val resource = repository.getEvents(DEFAULT_STUDY_ID, individual.id)) {
+                is Resource.Success -> {
+                    _state.update { it.copy(selectedTrack = resource.data ?: emptyList(), isLoading = false) }
+                }
+                is Resource.Error -> {
+                    _state.update { it.copy(error = resource.message, isLoading = false) }
+                }
+                else -> {
+                    _state.update { it.copy(isLoading = false) }
+                }
             }
         }
     }
@@ -242,21 +315,30 @@ class MapViewModel @Inject constructor(
             viewModelScope.launch {
                 try {
                     // Ładuj events/ścieżki dla każdego zwierzęcia
-                    val result = repository.getEvents(DEFAULT_STUDY_ID, individual.id)
-                    result.onSuccess { events ->
-                        _state.update { state ->
-                            state.copy(
-                                detailedTracks = state.detailedTracks + (individual.id to events),
-                                loadedDetailIndividuals = state.loadedDetailIndividuals + individual.id,
-                                loadingIndividuals = state.loadingIndividuals - individual.id
-                            )
+                    when (val resource = repository.getEvents(DEFAULT_STUDY_ID, individual.id)) {
+                        is Resource.Success -> {
+                            _state.update { state ->
+                                state.copy(
+                                    detailedTracks = state.detailedTracks + (individual.id to (resource.data ?: emptyList())),
+                                    loadedDetailIndividuals = state.loadedDetailIndividuals + individual.id,
+                                    loadingIndividuals = state.loadingIndividuals - individual.id
+                                )
+                            }
                         }
-                    }.onFailure { e ->
-                        _state.update { state ->
-                            state.copy(
-                                loadingIndividuals = state.loadingIndividuals - individual.id,
-                                error = "Nie udało się załadować szczegółów: ${e.message}"
-                            )
+                        is Resource.Error -> {
+                            _state.update { state ->
+                                state.copy(
+                                    loadingIndividuals = state.loadingIndividuals - individual.id,
+                                    error = "Nie udało się załadować szczegółów: ${resource.message}"
+                                )
+                            }
+                        }
+                        else -> {
+                             _state.update { state ->
+                                state.copy(
+                                    loadingIndividuals = state.loadingIndividuals - individual.id
+                                )
+                            }
                         }
                     }
                 } catch (e: Exception) {

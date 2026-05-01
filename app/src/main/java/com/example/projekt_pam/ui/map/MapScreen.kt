@@ -50,9 +50,9 @@ fun MapScreen(
     }
 
     // Obserwuj zmiany stanu i aktualizuj mapę z debouncing
-    LaunchedEffect(mapView, state.studies, state.filteredIndividuals, state.selectedTrack, state.searchQuery, state.zoomClickCount, state.selectedStudy, state.isTrackMode) {
+    LaunchedEffect(mapView, state.studies, state.filteredIndividuals, state.selectedTrack, state.animalTracks, state.searchQuery, state.zoomClickCount, state.selectedStudy, state.isTrackMode) {
         val contentHash = (state.studies.size + state.filteredIndividuals.size +
-                          state.selectedTrack.size + state.searchQuery.hashCode() + state.zoomClickCount +
+                          state.selectedTrack.size + state.animalTracks.size + state.searchQuery.hashCode() + state.zoomClickCount +
                           (state.selectedStudy?.id?.hashCode() ?: 0) + state.isTrackMode.hashCode()).hashCode()
         
         if (contentHash != lastUpdateHash && mapView != null) {
@@ -64,7 +64,7 @@ fun MapScreen(
             // Opóźnij aktualizację o 300ms aby nie laować
             debounceJob = scope.launch {
                 delay(300)
-                updateMapContent(mapView!!, state, viewModel::onMarkerSelected, viewModel::showTrackFor, viewModel::onStudyMarkerSelected)
+                updateMapContent(context, mapView!!, state, viewModel::onMarkerSelected, viewModel::showTrackFor, viewModel::onStudyMarkerSelected)
             }
         }
     }
@@ -101,6 +101,16 @@ fun MapScreen(
         if (state.selectedTrack.isNotEmpty()) {
             val first = state.selectedTrack.first()
             mapView?.controller?.animateTo(GeoPoint(first.latitude, first.longitude))
+        }
+    }
+
+    // Centruj mapę na pierwszym punkcie nowej trasy z badania
+    LaunchedEffect(state.animalTracks, mapView) {
+        if (state.animalTracks.isNotEmpty()) {
+            val firstTrackPoint = state.animalTracks.firstOrNull()?.locations?.firstOrNull()
+            if (firstTrackPoint != null) {
+                mapView?.controller?.animateTo(GeoPoint(firstTrackPoint.latitude, firstTrackPoint.longitude))
+            }
         }
     }
 
@@ -152,18 +162,20 @@ fun MapScreen(
             )
 
             val isSelected = state.selectedStudy != null
+            val hasDownloadAccess = state.selectedStudy?.accessType == com.example.projekt_pam.domain.model.AccessType.DOWNLOAD
+            val isButtonEnabled = isSelected && hasDownloadAccess
 
             Button(
                 onClick = { viewModel.onShowTrackClicked() },
-                enabled = isSelected,
+                enabled = isButtonEnabled,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSelected) Color(0xFF2E7D32) else Color(0xFFE0E0E0),
-                    contentColor = if (isSelected) Color.White else Color(0xFF616161)
+                    containerColor = if (isButtonEnabled) Color(0xFF2E7D32) else Color(0xFFE0E0E0),
+                    contentColor = if (isButtonEnabled) Color.White else Color(0xFF616161)
                 ),
-                border = if (isSelected) BorderStroke(2.dp, Color(0xFF1B5E20)) else null,
+                border = if (isButtonEnabled) BorderStroke(2.dp, Color(0xFF1B5E20)) else null,
                 elevation = ButtonDefaults.buttonElevation(
-                    defaultElevation = if (isSelected) 8.dp else 0.dp,
-                    pressedElevation = if (isSelected) 12.dp else 0.dp
+                    defaultElevation = if (isButtonEnabled) 8.dp else 0.dp,
+                    pressedElevation = if (isButtonEnabled) 12.dp else 0.dp
                 ),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -204,6 +216,7 @@ fun MapScreen(
 }
 
 private fun updateMapContent(
+    context: Context,
     mapView: MapView,
     state: MapState,
     onMarkerSelected: (Individual) -> Unit,
@@ -265,6 +278,9 @@ private fun updateMapContent(
                 title = study.name
                 subDescription = "Study ID: ${study.id}"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                if (study.accessType == com.example.projekt_pam.domain.model.AccessType.DOWNLOAD) {
+                    icon = androidx.core.content.ContextCompat.getDrawable(context, com.example.projekt_pam.R.drawable.ic_blue_pin)
+                }
                 setOnMarkerClickListener { clicked, _ ->
                     onStudySelected(study)
                     clicked.showInfoWindow()
@@ -284,6 +300,20 @@ private fun updateMapContent(
 
         tracksByIndividual.forEach { (_, events) ->
             val points = events.take(500).map { GeoPoint(it.latitude, it.longitude) }
+            if (points.size > 1) {
+                val polyline = Polyline().apply {
+                    setPoints(points)
+                    outlinePaint.color = android.graphics.Color.RED
+                    outlinePaint.strokeWidth = 6f
+                }
+                mapView.overlays.add(polyline)
+            }
+        }
+    }
+
+    if (state.animalTracks.isNotEmpty()) {
+        state.animalTracks.take(10).forEach { track ->
+            val points = track.locations.take(500).map { GeoPoint(it.latitude, it.longitude) }
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)

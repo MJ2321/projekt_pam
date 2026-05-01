@@ -4,6 +4,7 @@ import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Query
+import retrofit2.http.Url
 
 interface MovebankApi {
 
@@ -17,7 +18,15 @@ interface MovebankApi {
     @GET("direct-read")
     suspend fun getAllStudies(
         @Query("entity_type") entityType: String = "study",
-        @Query("attributes") attributes: String = "id,name,main_location_lat,main_location_long,i_have_download_access",
+        @Query("attributes") attributes: String = "id,name,main_location_lat,main_location_long",
+        @Query("license_accepted") licenseAccepted: Boolean = true
+    ): Response<ResponseBody>
+
+    @GET("direct-read")
+    suspend fun getDownloadableStudies(
+        @Query("entity_type") entityType: String = "study",
+        @Query("i_have_download_access") downloadAccess: Boolean = true,
+        @Query("attributes") attributes: String = "id",
         @Query("license_accepted") licenseAccepted: Boolean = true
     ): Response<ResponseBody>
 
@@ -39,6 +48,9 @@ interface MovebankApi {
         @Query("attributes") attributes: String = "location_lat,location_long,individual_id",
         @Query("license_accepted") licenseAccepted: Boolean = true
     ): Response<ResponseBody>
+
+    @GET
+    suspend fun getEvents(@Url url: String, @Query("formatter") formatter: String = "json"): Response<ResponseBody>
 
     companion object {
         const val BASE_URL = "https://www.movebank.org/movebank/service/"

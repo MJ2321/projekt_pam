@@ -1,10 +1,15 @@
 package com.example.projekt_pam.data.repository
 
 import com.example.projekt_pam.data.remote.MovebankApi
+import com.example.projekt_pam.domain.model.AccessType
+import com.example.projekt_pam.domain.model.AnimalTrack
 import com.example.projekt_pam.domain.model.Individual
+import com.example.projekt_pam.domain.model.Location
 import com.example.projekt_pam.domain.model.SensorEvent
 import com.example.projekt_pam.domain.model.Study
 import com.example.projekt_pam.domain.repository.WildlifeRepository
+import com.example.projekt_pam.util.Resource
+import java.security.MessageDigest
 import okhttp3.ResponseBody
 import retrofit2.Response
 import javax.inject.Inject
@@ -18,45 +23,87 @@ class WildlifeRepositoryImpl @Inject constructor(
         const val INITIAL_BACKOFF_MS = 1_000L
     }
 
-    override suspend fun getStudies(): Result<List<Study>> = try {
-        val response = executeWithRateLimitRetry { api.getAllStudies() }
-        if (response.isSuccessful) {
-            val csv = response.body()?.string().orEmpty()
-            Result.success(parseStudiesCsv(csv))
+    override suspend fun getStudies(): Resource<List<Study>> = try {
+        // Fetch all viewable studies
+        val allResponse = executeWithRateLimitRetry { api.getAllStudies() }
+        
+        // Fetch downloadable study IDs
+        val downloadableResponse = executeWithRateLimitRetry { api.getDownloadableStudies() }
+
+        if (allResponse.isSuccessful && downloadableResponse.isSuccessful) {
+            val allCsv = allResponse.body()?.string().orEmpty()
+            val downloadCsv = downloadableResponse.body()?.string().orEmpty()
+
+            val downloadableIds = parseDownloadableIdsCsv(downloadCsv)
+            val studies = parseStudiesCsv(allCsv, downloadableIds)
+            
+            Resource.Success(studies)
         } else {
-            val errorMsg = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
-            Result.failure(Exception("HTTP ${response.code()}: $errorMsg"))
+            val errorMsg = if (!allResponse.isSuccessful) {
+                allResponse.errorBody()?.string() ?: rateLimitFriendlyMessage(allResponse.code())
+            } else {
+                downloadableResponse.errorBody()?.string() ?: rateLimitFriendlyMessage(downloadableResponse.code())
+            }
+            Resource.Error("HTTP Error: $errorMsg")
         }
     } catch (e: Exception) {
-        Result.failure(e)
+        Resource.Error("Failed to fetch studies: ${e.message}")
     }
 
-    override suspend fun getIndividuals(studyId: Long): Result<List<Individual>> = try {
+    override suspend fun getIndividuals(studyId: Long): Resource<List<Individual>> = try {
         val response = executeWithRateLimitRetry { api.getIndividuals(studyId = studyId) }
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
             val individuals = parseIndividualsCsv(csv)
-            Result.success(individuals)
+            Resource.Success(individuals)
         } else {
             val errorMsg = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
-            Result.failure(Exception("HTTP ${response.code()}: $errorMsg"))
+            Resource.Error("HTTP ${response.code()}: $errorMsg")
         }
     } catch (e: Exception) {
-        Result.failure(e)
+        Resource.Error("Failed to fetch individuals: ${e.message}")
     }
 
-    override suspend fun getEvents(studyId: Long, individualId: Long?): Result<List<SensorEvent>> = try {
+    override suspend fun getEvents(studyId: Long, individualId: Long?): Resource<List<SensorEvent>> = try {
         val response = executeWithRateLimitRetry { api.getEvents(studyId = studyId, individualId = individualId) }
         if (response.isSuccessful) {
             val csv = response.body()?.string().orEmpty()
             val events = parseEventsCsv(csv, individualId ?: 0L)
-            Result.success(events)
+            Resource.Success(events)
         } else {
             val errorBody = response.errorBody()?.string() ?: rateLimitFriendlyMessage(response.code())
-            Result.failure(Exception("HTTP ${response.code()}: $errorBody"))
+            Resource.Error("HTTP ${response.code()}: $errorBody")
         }
     } catch (e: Exception) {
-        Result.failure(e)
+        Resource.Error("Failed to fetch events: ${e.message}")
+    }
+
+    override suspend fun getStudyTracks(studyId: Long, licenseMd5: String?): Resource<List<AnimalTrack>> {
+        val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&max_events_per_individual=2000"
+        val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
+
+        return try {
+            val response = api.getEvents(url)
+
+            if (response.isSuccessful) {
+                val responseBody = response.body()?.string() ?: ""
+                if (responseBody.contains("License Terms:")) {
+                    return Resource.LicenseRequired(responseBody)
+                }
+
+                val tracks = parseTracks(responseBody)
+                Resource.Success(tracks)
+            } else {
+                val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                if (errorBody.contains("License Terms:")) {
+                    val md5 = calculateMd5(errorBody)
+                    return getStudyTracks(studyId, md5)
+                }
+                Resource.Error("API Error: ${response.code()} - $errorBody")
+            }
+        } catch (e: Exception) {
+            Resource.Error("Network Error: ${e.message}")
+        }
     }
 
     private suspend fun executeWithRateLimitRetry(
@@ -89,7 +136,23 @@ class WildlifeRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun parseStudiesCsv(csv: String): List<Study> {
+    private fun parseDownloadableIdsCsv(csv: String): Set<Long> {
+        val lines = csv.lineSequence().filter { it.isNotBlank() }.toList()
+        if (lines.size < 2) return emptySet()
+
+        val headers = lines[0].split(",")
+        val idIdx = headers.indexOf("id")
+        if (idIdx == -1) return emptySet()
+
+        return lines.drop(1).mapNotNull { line ->
+            val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
+            if (cols.size > idIdx) {
+                cols[idIdx].toLongOrNull()
+            } else null
+        }.toSet()
+    }
+
+    private fun parseStudiesCsv(csv: String, downloadableIds: Set<Long>): List<Study> {
         val lines = csv.lineSequence().filter { it.isNotBlank() }.toList()
         if (lines.size < 2) return emptyList()
 
@@ -104,15 +167,18 @@ class WildlifeRepositoryImpl @Inject constructor(
             val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
 
             if (cols.size > maxOf(idIdx, nameIdx, latIdx, lonIdx)) {
+                val id = cols[idIdx].toLongOrNull() ?: 0L
                 val lat = cols[latIdx].toDoubleOrNull()
                 val lon = cols[lonIdx].toDoubleOrNull()
 
                 if (lat != null && lon != null) {
+                    val accessType = if (downloadableIds.contains(id)) AccessType.DOWNLOAD else AccessType.VIEW_ONLY
                     Study(
-                        id = cols[idIdx].toLongOrNull() ?: 0L,
+                        id = id,
                         name = cols[nameIdx].trim('"'),
                         latitude = lat,
-                        longitude = lon
+                        longitude = lon,
+                        accessType = accessType
                     )
                 } else null
             } else null
@@ -173,6 +239,31 @@ class WildlifeRepositoryImpl @Inject constructor(
                     )
                 } else null
             } else null
+        }
+    }
+
+    private fun calculateMd5(input: String): String {
+        return MessageDigest.getInstance("MD5").digest(input.toByteArray()).joinToString("") {
+            "%02x".format(it)
+        }
+    }
+
+    private fun parseTracks(jsonString: String): List<AnimalTrack> {
+        // Assuming the response is a JSON array of events
+        val events = org.json.JSONArray(jsonString)
+        val locationsByIndividual = mutableMapOf<Long, MutableList<Location>>()
+
+        for (i in 0 until events.length()) {
+            val event = events.getJSONObject(i)
+            val individualId = event.getLong("individual_id")
+            val lat = event.getDouble("location_lat")
+            val lon = event.getDouble("location_long")
+
+            locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+        }
+
+        return locationsByIndividual.map { (id, locations) ->
+            AnimalTrack(individualId = id, locations = locations)
         }
     }
 }

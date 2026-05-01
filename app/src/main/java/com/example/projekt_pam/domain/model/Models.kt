@@ -1,10 +1,22 @@
 package com.example.projekt_pam.domain.model
 
+data class Location(val latitude: Double, val longitude: Double)
+
+enum class AccessType {
+    DOWNLOAD, VIEW_ONLY
+}
+
 data class Study(
     val id: Long,
     val name: String,
     val latitude: Double,
-    val longitude: Double
+    val longitude: Double,
+    val accessType: AccessType = AccessType.VIEW_ONLY
+)
+
+data class AnimalTrack(
+    val individualId: Long,
+    val locations: List<Location>
 )
 
 data class Individual(

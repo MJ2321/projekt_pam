@@ -1,5 +1,6 @@
 package com.example.projekt_pam.ui.map
 
+import com.example.projekt_pam.domain.model.AnimalTrack
 import com.example.projekt_pam.domain.model.Individual
 import com.example.projekt_pam.domain.model.SensorEvent
 import com.example.projekt_pam.domain.model.Study
@@ -28,5 +29,13 @@ data class MapState(
     // Które zwierzęta mają załadowane szczegóły
     val loadedDetailIndividuals: Set<Long> = emptySet(),
     // Flagi ładowania dla poszczególnych zwierząt
-    val loadingIndividuals: Set<Long> = emptySet()
+    val loadingIndividuals: Set<Long> = emptySet(),
+    val animalTracks: List<AnimalTrack> = emptyList(),
+    val licenseDialog: LicenseDialogState = LicenseDialogState()
+)
+
+data class LicenseDialogState(
+    val show: Boolean = false,
+    val studyId: Long? = null,
+    val licenseText: String = ""
 )
