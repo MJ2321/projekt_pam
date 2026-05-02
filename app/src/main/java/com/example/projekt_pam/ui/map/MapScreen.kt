@@ -331,10 +331,10 @@ private fun updateMapContent(
         val tracksByIndividual = state.selectedTrack
             .groupBy { it.individualId }
             .entries
-            .take(5)
+            .take(1) // Only pick one animal
 
         tracksByIndividual.forEach { (_, events) ->
-            val points = events.take(500).map { GeoPoint(it.latitude, it.longitude) }
+            val points = events.map { GeoPoint(it.latitude, it.longitude) }
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
@@ -343,12 +343,21 @@ private fun updateMapContent(
                 }
                 mapView.overlays.add(polyline)
             }
+            
+            // Mark each spot with a pin
+            points.forEach { pt ->
+                val marker = Marker(mapView).apply {
+                    position = pt
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                }
+                mapView.overlays.add(marker)
+            }
         }
     }
 
     if (state.animalTracks.isNotEmpty()) {
-        state.animalTracks.take(10).forEach { track ->
-            val points = track.locations.take(500).map { GeoPoint(it.latitude, it.longitude) }
+        state.animalTracks.take(1).forEach { track -> // Only pick one animal
+            val points = track.locations.map { GeoPoint(it.latitude, it.longitude) }
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
@@ -356,6 +365,15 @@ private fun updateMapContent(
                     outlinePaint.strokeWidth = 6f
                 }
                 mapView.overlays.add(polyline)
+            }
+            
+            // Mark each spot with a pin
+            points.forEach { pt ->
+                val marker = Marker(mapView).apply {
+                    position = pt
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                }
+                mapView.overlays.add(marker)
             }
         }
     }

@@ -86,7 +86,7 @@ class WildlifeRepositoryImpl @Inject constructor(
         }
 
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=50&format=json"
+            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=5000&format=json"
             val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
             try {
@@ -309,6 +309,7 @@ class WildlifeRepositoryImpl @Inject constructor(
 
     private fun parseJsonTracksStream(inputStream: java.io.InputStream): List<AnimalTrack> {
         val locationsByIndividual = mutableMapOf<Long, MutableList<Location>>()
+        val eventCountsByIndividual = mutableMapOf<Long, Int>()
         val reader = android.util.JsonReader(java.io.InputStreamReader(inputStream, "UTF-8"))
         reader.isLenient = true
         var eventCount = 0
@@ -340,7 +341,12 @@ class WildlifeRepositoryImpl @Inject constructor(
                 reader.endObject()
                 eventCount++
                 if (lat != null && lon != null && individualId != null) {
-                    locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+                    val count = eventCountsByIndividual.getOrDefault(individualId, 0)
+                    // Keep 1 out of every 500 points to spread them far apart in time
+                    if (count % 500 == 0) {
+                        locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+                    }
+                    eventCountsByIndividual[individualId] = count + 1
                 }
             }
             reader.endArray()
