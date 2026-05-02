@@ -23,6 +23,8 @@ class WildlifeRepositoryImpl @Inject constructor(
         const val INITIAL_BACKOFF_MS = 1_000L
     }
 
+    private val tracksCache = java.util.concurrent.ConcurrentHashMap<Long, List<AnimalTrack>>()
+
     override suspend fun getStudies(): Resource<List<Study>> = try {
         // Fetch all viewable studies
         val allResponse = executeWithRateLimitRetry { api.getAllStudies() }
@@ -79,39 +81,56 @@ class WildlifeRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getStudyTracks(studyId: Long, licenseMd5: String?): Resource<List<AnimalTrack>> {
-        val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&max_events_per_individual=2000&attributes=timestamp,location_lat,location_long,individual_id"
-        val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
+        if (licenseMd5 == null && tracksCache.containsKey(studyId)) {
+            return Resource.Success(tracksCache[studyId]!!)
+        }
 
-        return try {
-            val response = api.getEvents(url)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=50&format=json"
+            val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
-            if (response.isSuccessful) {
-                val responseBody = response.body()?.string()?.trim() ?: ""
-                
-                if (responseBody.contains("License Terms:")) {
-                    return Resource.LicenseRequired(responseBody)
+            try {
+                val response = executeWithRateLimitRetry { api.getEvents(url) }
+
+                if (response.isSuccessful) {
+                    val body = response.body() ?: return@withContext Resource.Success(emptyList())
+                    val responseBytes = body.bytes() // This is what triggers the exception if on main thread!
+                    val responseBody = String(responseBytes, Charsets.UTF_8).trim()
+
+                    android.util.Log.d("WildlifeRepo", "Track response length: ${responseBody.length}, first 200 chars: ${responseBody.take(200)}")
+
+                    if (responseBody.contains("License Terms:")) {
+                        return@withContext Resource.LicenseRequired(responseBody)
+                    }
+
+                    if (responseBody.startsWith("<p>No")) {
+                        return@withContext Resource.Error("Brak uprawnie\u0144 lub brak danych (odmowa dost\u0119pu).")
+                    }
+
+                    if (responseBody.isEmpty()) {
+                        return@withContext Resource.Success(emptyList())
+                    }
+
+                    // Try JSON parsing first, fall back to CSV
+                    val tracks = if (responseBody.trimStart().startsWith("[")) {
+                        parseJsonTracksStream(java.io.ByteArrayInputStream(responseBytes))
+                    } else {
+                        parseTracks(responseBody)
+                    }
+                    android.util.Log.d("WildlifeRepo", "Parsed ${tracks.size} tracks, points: ${tracks.sumOf { it.locations.size }}")
+                    tracksCache[studyId] = tracks
+                    Resource.Success(tracks)
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "Unknown error"
+                    if (errorBody.contains("License Terms:")) {
+                        val md5 = calculateMd5(errorBody)
+                        return@withContext getStudyTracks(studyId, md5)
+                    }
+                    Resource.Error("API Error: ${response.code()} - $errorBody")
                 }
-
-                if (responseBody.startsWith("<p>No")) {
-                    return Resource.Error("Brak uprawnień lub brak danych (odmowa dostępu).")
-                }
-
-                if (responseBody.isEmpty()) {
-                    return Resource.Success(emptyList())
-                }
-
-                val tracks = parseTracks(responseBody)
-                Resource.Success(tracks)
-            } else {
-                val errorBody = response.errorBody()?.string() ?: "Unknown error"
-                if (errorBody.contains("License Terms:")) {
-                    val md5 = calculateMd5(errorBody)
-                    return getStudyTracks(studyId, md5)
-                }
-                Resource.Error("API Error: ${response.code()} - $errorBody")
+            } catch (e: Exception) {
+                Resource.Error("Network Error (${e.javaClass.simpleName}): ${e.message ?: "unknown"}")
             }
-        } catch (e: Exception) {
-            Resource.Error("Network Error: ${e.message}")
         }
     }
 
@@ -286,5 +305,51 @@ class WildlifeRepositoryImpl @Inject constructor(
         return locationsByIndividual.map { (id, locations) ->
             AnimalTrack(individualId = id, locations = locations)
         }
+    }
+
+    private fun parseJsonTracksStream(inputStream: java.io.InputStream): List<AnimalTrack> {
+        val locationsByIndividual = mutableMapOf<Long, MutableList<Location>>()
+        val reader = android.util.JsonReader(java.io.InputStreamReader(inputStream, "UTF-8"))
+        reader.isLenient = true
+        var eventCount = 0
+        try {
+            reader.beginArray()
+            while (reader.hasNext()) {
+                reader.beginObject()
+                var lat: Double? = null
+                var lon: Double? = null
+                var individualId: Long? = null
+                while (reader.hasNext()) {
+                    val key = reader.nextName()
+                    when (key) {
+                        "location-lat", "location_lat" -> {
+                            val raw = reader.nextString()
+                            lat = raw.toDoubleOrNull()
+                        }
+                        "location-long", "location_long" -> {
+                            val raw = reader.nextString()
+                            lon = raw.toDoubleOrNull()
+                        }
+                        "individual-id", "individual_id" -> {
+                            val raw = reader.nextString()
+                            individualId = raw.toLongOrNull()
+                        }
+                        else -> reader.skipValue()
+                    }
+                }
+                reader.endObject()
+                eventCount++
+                if (lat != null && lon != null && individualId != null) {
+                    locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+                }
+            }
+            reader.endArray()
+        } catch (e: Exception) {
+            android.util.Log.e("WildlifeRepo", "JSON parse error after $eventCount events: ${e.javaClass.simpleName}: ${e.message}")
+        } finally {
+            reader.close()
+        }
+        android.util.Log.d("WildlifeRepo", "JSON parsed $eventCount events -> ${locationsByIndividual.size} individuals")
+        return locationsByIndividual.map { AnimalTrack(it.key, it.value) }
     }
 }

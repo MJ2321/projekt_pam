@@ -49,8 +49,9 @@ interface MovebankApi {
         @Query("license_accepted") licenseAccepted: Boolean = true
     ): Response<ResponseBody>
 
+    @retrofit2.http.Streaming
     @GET
-    suspend fun getEvents(@Url url: String, @Query("formatter") formatter: String = "json"): Response<ResponseBody>
+    suspend fun getEvents(@Url url: String): Response<ResponseBody>
 
     companion object {
         const val BASE_URL = "https://www.movebank.org/movebank/service/"

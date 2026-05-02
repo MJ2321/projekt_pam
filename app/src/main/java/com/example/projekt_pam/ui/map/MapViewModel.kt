@@ -164,16 +164,24 @@ class MapViewModel @Inject constructor(
             when (val resource = repository.getStudyTracks(studyId, licenseMd5)) {
                 is Resource.Success -> {
                     val tracks = resource.data ?: emptyList()
-                    
+                    android.util.Log.d("MapViewModel", "Tracks received: ${tracks.size} individuals, total points: ${tracks.sumOf { it.locations.size }}")
 
-                    _state.update {
-                        it.copy(
-                            animalTracks = tracks,
-                            isLoading = false,
-                            // Clear old tracks from other modes
-                            selectedTrack = emptyList(),
-                            isTrackMode = true // Wymusza wejście w tryb rysowania i chowania pozostałych punktów, jeśli chcemy to zachować
-                        )
+                    if (tracks.isEmpty()) {
+                        _state.update {
+                            it.copy(
+                                isLoading = false,
+                                error = "Brak danych trasy dla wybranego badania."
+                            )
+                        }
+                    } else {
+                        _state.update {
+                            it.copy(
+                                animalTracks = tracks,
+                                isLoading = false,
+                                selectedTrack = emptyList(),
+                                isTrackMode = true
+                            )
+                        }
                     }
                 }
                 is Resource.Error -> {

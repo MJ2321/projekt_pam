@@ -34,10 +34,12 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(authInterceptor: AuthInterceptor): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY // This will show the error details in Logcat
+            level = HttpLoggingInterceptor.Level.HEADERS // This will show the error details in Logcat
         }
 
         return OkHttpClient.Builder()// 1. Ensure the AuthInterceptor is first
+            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor(authInterceptor)
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()

@@ -106,12 +106,17 @@ fun MapScreen(
         }
     }
 
-    // Centruj mapę na pierwszym punkcie nowej trasy z badania
+    // Centruj i przybliż mapę na trasę z badania
     LaunchedEffect(state.animalTracks, mapView) {
-        if (state.animalTracks.isNotEmpty()) {
-            val firstTrackPoint = state.animalTracks.firstOrNull()?.locations?.firstOrNull()
-            if (firstTrackPoint != null) {
-                mapView?.controller?.animateTo(GeoPoint(firstTrackPoint.latitude, firstTrackPoint.longitude))
+        if (state.animalTracks.isNotEmpty() && mapView != null) {
+            val allPoints = state.animalTracks.flatMap { track ->
+                track.locations.map { GeoPoint(it.latitude, it.longitude) }
+            }
+            if (allPoints.isNotEmpty()) {
+                val boundingBox = BoundingBox.fromGeoPointsSafe(allPoints)
+                // Add a small delay to ensure the map layout is ready before zooming to bounds
+                delay(100)
+                mapView?.zoomToBoundingBox(boundingBox, true)
             }
         }
     }
@@ -333,7 +338,7 @@ private fun updateMapContent(
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
-                    outlinePaint.color = android.graphics.Color.RED
+                    outlinePaint.color = android.graphics.Color.parseColor("#800080")
                     outlinePaint.strokeWidth = 6f
                 }
                 mapView.overlays.add(polyline)
@@ -347,7 +352,7 @@ private fun updateMapContent(
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
-                    outlinePaint.color = android.graphics.Color.RED
+                    outlinePaint.color = android.graphics.Color.parseColor("#800080")
                     outlinePaint.strokeWidth = 6f
                 }
                 mapView.overlays.add(polyline)
