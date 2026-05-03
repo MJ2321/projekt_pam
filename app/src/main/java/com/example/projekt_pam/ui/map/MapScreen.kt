@@ -171,26 +171,46 @@ fun MapScreen(
             val isSelected = state.selectedStudy != null
             val hasDownloadAccess = state.selectedStudy?.accessType == com.example.projekt_pam.domain.model.AccessType.DOWNLOAD
             val isButtonEnabled = isSelected && hasDownloadAccess
+            val tracksVisible = state.animalTracks.isNotEmpty() || state.selectedTrack.isNotEmpty()
 
-            Button(
-                onClick = { viewModel.onShowTrackClicked() },
-                enabled = isButtonEnabled,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isButtonEnabled) Color(0xFF2E7D32) else Color(0xFFE0E0E0),
-                    contentColor = if (isButtonEnabled) Color.White else Color(0xFF616161)
-                ),
-                border = if (isButtonEnabled) BorderStroke(2.dp, Color(0xFF1B5E20)) else null,
-                elevation = ButtonDefaults.buttonElevation(
-                    defaultElevation = if (isButtonEnabled) 8.dp else 0.dp,
-                    pressedElevation = if (isButtonEnabled) 12.dp else 0.dp
-                ),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp)
-                    .navigationBarsPadding()
-                    .zIndex(100f)
-            ) {
-                Text("Wyświetl trasę")
+            if (tracksVisible) {
+                Button(
+                    onClick = { viewModel.onClearTracksClicked() },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFD32F2F),
+                        contentColor = Color.White
+                    ),
+                    border = BorderStroke(2.dp, Color(0xFFC62828)),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp, pressedElevation = 12.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 24.dp)
+                        .navigationBarsPadding()
+                        .zIndex(100f)
+                ) {
+                    Text("Wróć do mapy")
+                }
+            } else {
+                Button(
+                    onClick = { viewModel.onShowTrackClicked() },
+                    enabled = isButtonEnabled,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isButtonEnabled) Color(0xFF2E7D32) else Color(0xFFE0E0E0),
+                        contentColor = if (isButtonEnabled) Color.White else Color(0xFF616161)
+                    ),
+                    border = if (isButtonEnabled) BorderStroke(2.dp, Color(0xFF1B5E20)) else null,
+                    elevation = ButtonDefaults.buttonElevation(
+                        defaultElevation = if (isButtonEnabled) 8.dp else 0.dp,
+                        pressedElevation = if (isButtonEnabled) 12.dp else 0.dp
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 24.dp)
+                        .navigationBarsPadding()
+                        .zIndex(100f)
+                ) {
+                    Text("Wyświetl trasę")
+                }
             }
 
             if (state.isLoading) {
@@ -331,7 +351,17 @@ private fun updateMapContent(
         val tracksByIndividual = state.selectedTrack
             .groupBy { it.individualId }
             .entries
-            .take(1) // Only pick one animal
+            .take(5) // Show up to 5 animals
+
+        // Create a fast-rendering BitmapDrawable to prevent map freezes
+        val dotBitmap = android.graphics.Bitmap.createBitmap(24, 24, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(dotBitmap)
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.parseColor("#800080")
+            isAntiAlias = true
+        }
+        canvas.drawCircle(12f, 12f, 12f, paint)
+        val dotDrawable = android.graphics.drawable.BitmapDrawable(context.resources, dotBitmap)
 
         tracksByIndividual.forEach { (_, events) ->
             val points = events.map { GeoPoint(it.latitude, it.longitude) }
@@ -344,11 +374,12 @@ private fun updateMapContent(
                 mapView.overlays.add(polyline)
             }
             
-            // Mark each spot with a pin
+            // Mark each spot with a purple dot
             points.forEach { pt ->
                 val marker = Marker(mapView).apply {
                     position = pt
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    icon = dotDrawable
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 }
                 mapView.overlays.add(marker)
             }
@@ -356,7 +387,17 @@ private fun updateMapContent(
     }
 
     if (state.animalTracks.isNotEmpty()) {
-        state.animalTracks.take(1).forEach { track -> // Only pick one animal
+        // Create a fast-rendering BitmapDrawable to prevent map freezes
+        val dotBitmap = android.graphics.Bitmap.createBitmap(24, 24, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(dotBitmap)
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.parseColor("#800080")
+            isAntiAlias = true
+        }
+        canvas.drawCircle(12f, 12f, 12f, paint)
+        val dotDrawable = android.graphics.drawable.BitmapDrawable(context.resources, dotBitmap)
+
+        state.animalTracks.take(5).forEach { track -> // Show up to 5 animals
             val points = track.locations.map { GeoPoint(it.latitude, it.longitude) }
             if (points.size > 1) {
                 val polyline = Polyline().apply {
@@ -367,11 +408,12 @@ private fun updateMapContent(
                 mapView.overlays.add(polyline)
             }
             
-            // Mark each spot with a pin
+            // Mark each spot with a purple dot
             points.forEach { pt ->
                 val marker = Marker(mapView).apply {
                     position = pt
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    icon = dotDrawable
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
                 }
                 mapView.overlays.add(marker)
             }

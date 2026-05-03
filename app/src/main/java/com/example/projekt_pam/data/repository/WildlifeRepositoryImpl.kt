@@ -86,7 +86,7 @@ class WildlifeRepositoryImpl @Inject constructor(
         }
 
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=5000&format=json"
+            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=1000&format=json"
             val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
             try {
@@ -94,29 +94,32 @@ class WildlifeRepositoryImpl @Inject constructor(
 
                 if (response.isSuccessful) {
                     val body = response.body() ?: return@withContext Resource.Success(emptyList())
-                    val responseBytes = body.bytes() // This is what triggers the exception if on main thread!
-                    val responseBody = String(responseBytes, Charsets.UTF_8).trim()
+                    val contentType = body.contentType()?.subtype
 
-                    android.util.Log.d("WildlifeRepo", "Track response length: ${responseBody.length}, first 200 chars: ${responseBody.take(200)}")
+                    if (contentType != "json") {
+                        val responseBody = body.string().trim()
 
-                    if (responseBody.contains("License Terms:")) {
-                        return@withContext Resource.LicenseRequired(responseBody)
+                        android.util.Log.d("WildlifeRepo", "Text response: ${responseBody.take(200)}")
+
+                        if (responseBody.contains("License Terms:")) {
+                            return@withContext Resource.LicenseRequired(responseBody)
+                        }
+
+                        if (responseBody.startsWith("<p>No")) {
+                            return@withContext Resource.Error("Brak uprawnie\u0144 lub brak danych (odmowa dost\u0119pu).")
+                        }
+
+                        if (responseBody.isEmpty()) {
+                            return@withContext Resource.Success(emptyList())
+                        }
+
+                        val tracks = parseTracks(responseBody)
+                        tracksCache[studyId] = tracks
+                        return@withContext Resource.Success(tracks)
                     }
 
-                    if (responseBody.startsWith("<p>No")) {
-                        return@withContext Resource.Error("Brak uprawnie\u0144 lub brak danych (odmowa dost\u0119pu).")
-                    }
-
-                    if (responseBody.isEmpty()) {
-                        return@withContext Resource.Success(emptyList())
-                    }
-
-                    // Try JSON parsing first, fall back to CSV
-                    val tracks = if (responseBody.trimStart().startsWith("[")) {
-                        parseJsonTracksStream(java.io.ByteArrayInputStream(responseBytes))
-                    } else {
-                        parseTracks(responseBody)
-                    }
+                    // Process JSON stream efficiently without loading into full byte array
+                    val tracks = parseJsonTracksStream(body.byteStream())
                     android.util.Log.d("WildlifeRepo", "Parsed ${tracks.size} tracks, points: ${tracks.sumOf { it.locations.size }}")
                     tracksCache[studyId] = tracks
                     Resource.Success(tracks)
@@ -341,10 +344,16 @@ class WildlifeRepositoryImpl @Inject constructor(
                 reader.endObject()
                 eventCount++
                 if (lat != null && lon != null && individualId != null) {
+                    if (!locationsByIndividual.containsKey(individualId) && locationsByIndividual.size >= 5) {
+                        // Stop reading completely once we hit 5 animals. This prevents freezing on huge studies!
+                        break
+                    }
                     val count = eventCountsByIndividual.getOrDefault(individualId, 0)
-                    // Keep 1 out of every 500 points to spread them far apart in time
-                    if (count % 500 == 0) {
-                        locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+                    val list = locationsByIndividual.getOrPut(individualId) { mutableListOf() }
+                    
+                    // Keep 1 out of every 100 points, up to a maximum of 10 points per animal
+                    if (list.size < 10 && count % 100 == 0) {
+                        list.add(Location(lat, lon))
                     }
                     eventCountsByIndividual[individualId] = count + 1
                 }

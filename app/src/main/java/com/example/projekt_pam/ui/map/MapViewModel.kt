@@ -158,6 +158,16 @@ class MapViewModel @Inject constructor(
         fetchTracksForStudy(selectedStudy.id)
     }
 
+    fun onClearTracksClicked() {
+        _state.update { it.copy(
+            animalTracks = emptyList(),
+            selectedTrack = emptyList(),
+            selectedStudy = null,
+            isTrackMode = false,
+            error = null
+        ) }
+    }
+
     private fun fetchTracksForStudy(studyId: Long, licenseMd5: String? = null) {
         viewModelScope.launch {
             _state.update { it.copy(isLoading = true) }
