@@ -351,54 +351,27 @@ private fun updateMapContent(
         val tracksByIndividual = state.selectedTrack
             .groupBy { it.individualId }
             .entries
-            .take(5) // Show up to 5 animals
-
-        // Create a fast-rendering BitmapDrawable to prevent map freezes
-        val dotBitmap = android.graphics.Bitmap.createBitmap(24, 24, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(dotBitmap)
-        val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.parseColor("#800080")
-            isAntiAlias = true
-        }
-        canvas.drawCircle(12f, 12f, 12f, paint)
-        val dotDrawable = android.graphics.drawable.BitmapDrawable(context.resources, dotBitmap)
+            .take(3) // Pokaż max 3 zwierzęta zamiast 5
 
         tracksByIndividual.forEach { (_, events) ->
-            val points = events.map { GeoPoint(it.latitude, it.longitude) }
+            // Bierzemy co 3 punkt dla jeszcze większej płynności (lub wszystkie, jeśli mało)
+            val simplifiedEvents = if (events.size > 50) events.filterIndexed { index, _ -> index % 3 == 0 } else events
+            val points = simplifiedEvents.map { GeoPoint(it.latitude, it.longitude) }
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
                     outlinePaint.color = android.graphics.Color.parseColor("#800080")
                     outlinePaint.strokeWidth = 6f
                 }
-                mapView.overlays.add(polyline)
-            }
-            
-            // Mark each spot with a purple dot
-            points.forEach { pt ->
-                val marker = Marker(mapView).apply {
-                    position = pt
-                    icon = dotDrawable
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                }
-                mapView.overlays.add(marker)
+                mapView.overlays.add(polyline) // Dodajemy TYLKO linię. Brak markerów dla każdego punktu drastycznie przyspieszy renderowanie.
             }
         }
     }
 
     if (state.animalTracks.isNotEmpty()) {
-        // Create a fast-rendering BitmapDrawable to prevent map freezes
-        val dotBitmap = android.graphics.Bitmap.createBitmap(24, 24, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(dotBitmap)
-        val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.parseColor("#800080")
-            isAntiAlias = true
-        }
-        canvas.drawCircle(12f, 12f, 12f, paint)
-        val dotDrawable = android.graphics.drawable.BitmapDrawable(context.resources, dotBitmap)
-
-        state.animalTracks.take(5).forEach { track -> // Show up to 5 animals
-            val points = track.locations.map { GeoPoint(it.latitude, it.longitude) }
+        state.animalTracks.take(3).forEach { track -> // Pokaż max 3 zwierzęta zamiast 5
+            val simplifiedLocations = if (track.locations.size > 50) track.locations.filterIndexed { index, _ -> index % 3 == 0 } else track.locations
+            val points = simplifiedLocations.map { GeoPoint(it.latitude, it.longitude) }
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
@@ -406,16 +379,6 @@ private fun updateMapContent(
                     outlinePaint.strokeWidth = 6f
                 }
                 mapView.overlays.add(polyline)
-            }
-            
-            // Mark each spot with a purple dot
-            points.forEach { pt ->
-                val marker = Marker(mapView).apply {
-                    position = pt
-                    icon = dotDrawable
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                }
-                mapView.overlays.add(marker)
             }
         }
     }

@@ -86,7 +86,13 @@ class WildlifeRepositoryImpl @Inject constructor(
         }
 
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=1000&format=json"
+            val fourteenDaysAgo = System.currentTimeMillis() - 14L * 24 * 60 * 60 * 1000
+            val sdf = java.text.SimpleDateFormat("yyyyMMddHHmmssSSS", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }
+            val timestampAfter = sdf.format(java.util.Date(fourteenDaysAgo))
+            
+            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=300&timestamp_after=$timestampAfter&format=json"
             val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
             try {
@@ -351,8 +357,8 @@ class WildlifeRepositoryImpl @Inject constructor(
                     val count = eventCountsByIndividual.getOrDefault(individualId, 0)
                     val list = locationsByIndividual.getOrPut(individualId) { mutableListOf() }
                     
-                    // Keep 1 out of every 100 points, up to a maximum of 10 points per animal
-                    if (list.size < 10 && count % 100 == 0) {
+                    // Keep every 2nd point to slightly simplify path without destroying the track
+                    if (count % 2 == 0) {
                         list.add(Location(lat, lon))
                     }
                     eventCountsByIndividual[individualId] = count + 1

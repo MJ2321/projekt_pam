@@ -38,8 +38,8 @@ object NetworkModule {
         }
 
         return OkHttpClient.Builder()// 1. Ensure the AuthInterceptor is first
-            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor(authInterceptor)
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
