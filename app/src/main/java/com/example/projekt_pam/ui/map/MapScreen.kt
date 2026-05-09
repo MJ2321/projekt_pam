@@ -292,42 +292,15 @@ private fun updateMapContent(
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
         }
         mapView.overlays.add(marker)
-    } else if (isSearchActive) {
-        // Przy aktywnym searchu pokazujemy tylko zwierzęta i ich lokalizacje.
-        state.filteredIndividuals.forEach { individual ->
-            val lat = individual.lastLat ?: return@forEach
-            val lon = individual.lastLon ?: return@forEach
-
-            val marker = Marker(mapView).apply {
-                position = GeoPoint(lat, lon)
-                title = individual.identifier
-                subDescription = "${individual.taxon}\nLat: ${String.format(Locale.US, "%.4f", lat)}\nLon: ${String.format(Locale.US, "%.4f", lon)}"
-                relatedObject = individual
-                infoWindow = infoWindow
-                setOnMarkerClickListener { clicked, _ ->
-                    onMarkerSelected(individual)
-                    clicked.showInfoWindow()
-                    true
-                }
-            }
-            mapView.overlays.add(marker)
-        }
-
-        if (state.zoomClickCount >= 8) {
-            state.detailedTracks.forEach { (_, events) ->
-                if (events.isNotEmpty()) {
-                    val polyline = Polyline().apply {
-                        setPoints(events.map { GeoPoint(it.latitude, it.longitude) })
-                        outlinePaint.color = android.graphics.Color.BLUE
-                        outlinePaint.strokeWidth = 5f
-                    }
-                    mapView.overlays.add(polyline)
-                }
-            }
-        }
     } else {
-        // Brak searcha -> pokazujemy domyślne punkty badań.
-        state.studies.forEach { study ->
+        // Zawsze obsługujemy wyświetlanie badań, ewentualnie przefiltrowanych
+        val studiesToShow = if (isSearchActive) {
+            state.studies.filter { it.name.contains(state.searchQuery, ignoreCase = true) }
+        } else {
+            state.studies
+        }
+
+        studiesToShow.forEach { study ->
             val marker = Marker(mapView).apply {
                 position = GeoPoint(study.latitude, study.longitude)
                 title = study.name
@@ -343,6 +316,41 @@ private fun updateMapContent(
                 }
             }
             mapView.overlays.add(marker)
+        }
+        
+        // Dodatkowo pokazujemy indywidualne zwierzęta np. przy podwójnym zoomie, tak jak do tej pory z DEFAULT_STUDY_ID
+        if (isSearchActive) {
+            state.filteredIndividuals.forEach { individual ->
+                val lat = individual.lastLat ?: return@forEach
+                val lon = individual.lastLon ?: return@forEach
+
+                val marker = Marker(mapView).apply {
+                    position = GeoPoint(lat, lon)
+                    title = individual.identifier
+                    subDescription = "${individual.taxon}\nLat: ${String.format(Locale.US, "%.4f", lat)}\nLon: ${String.format(Locale.US, "%.4f", lon)}"
+                    relatedObject = individual
+                    infoWindow = infoWindow
+                    setOnMarkerClickListener { clicked, _ ->
+                        onMarkerSelected(individual)
+                        clicked.showInfoWindow()
+                        true
+                    }
+                }
+                mapView.overlays.add(marker)
+            }
+
+            if (state.zoomClickCount >= 8) {
+                state.detailedTracks.forEach { (_, events) ->
+                    if (events.isNotEmpty()) {
+                        val polyline = Polyline().apply {
+                            setPoints(events.map { GeoPoint(it.latitude, it.longitude) })
+                            outlinePaint.color = android.graphics.Color.BLUE
+                            outlinePaint.strokeWidth = 5f
+                        }
+                        mapView.overlays.add(polyline)
+                    }
+                }
+            }
         }
     }
 

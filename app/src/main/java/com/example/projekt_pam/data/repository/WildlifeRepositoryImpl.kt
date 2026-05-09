@@ -86,13 +86,13 @@ class WildlifeRepositoryImpl @Inject constructor(
         }
 
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val fourteenDaysAgo = System.currentTimeMillis() - 14L * 24 * 60 * 60 * 1000
+            val oneYearAgo = System.currentTimeMillis() - 365L * 24 * 60 * 60 * 1000
             val sdf = java.text.SimpleDateFormat("yyyyMMddHHmmssSSS", java.util.Locale.US).apply {
                 timeZone = java.util.TimeZone.getTimeZone("UTC")
             }
-            val timestampAfter = sdf.format(java.util.Date(fourteenDaysAgo))
+            val timestampAfter = sdf.format(java.util.Date(oneYearAgo))    
             
-            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=300&timestamp_after=$timestampAfter&format=json"
+            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=50&timestamp_after=$timestampAfter&format=json"
             val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
             try {
@@ -349,16 +349,17 @@ class WildlifeRepositoryImpl @Inject constructor(
                 }
                 reader.endObject()
                 eventCount++
-                if (lat != null && lon != null && individualId != null) {
-                    if (!locationsByIndividual.containsKey(individualId) && locationsByIndividual.size >= 5) {
-                        // Stop reading completely once we hit 5 animals. This prevents freezing on huge studies!
+                if (lat != null && lon != null && individualId != null) {       
+                    if (!locationsByIndividual.containsKey(individualId) && locationsByIndividual.size >= 1) {
+                        // Zatrzymujemy czytanie JSONa już po 1 zwierzęciu! 
+                        // Zapobiegnie to potężnym obciążeniom sieci na dużych badaniach (bo stream się po prostu ucznie).
                         break
                     }
                     val count = eventCountsByIndividual.getOrDefault(individualId, 0)
                     val list = locationsByIndividual.getOrPut(individualId) { mutableListOf() }
-                    
-                    // Keep every 2nd point to slightly simplify path without destroying the track
-                    if (count % 2 == 0) {
+
+                    // Zapisujemy tylko co czwarty punkt, aby zyskać na dystansie a zmniejszyć gęstość
+                    if (count % 4 == 0) {
                         list.add(Location(lat, lon))
                     }
                     eventCountsByIndividual[individualId] = count + 1
