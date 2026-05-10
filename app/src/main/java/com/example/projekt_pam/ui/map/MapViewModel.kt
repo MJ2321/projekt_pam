@@ -92,7 +92,8 @@ class MapViewModel @Inject constructor(
                     }
                 }
                 is Resource.Error -> {
-                    _state.update { it.copy(error = resource.message, filteredIndividuals = emptyList()) }
+                    // Silently fail - don't show errors when searching/loading individuals
+                    _state.update { it.copy(filteredIndividuals = emptyList()) }
                 }
                 else -> {}
             }
@@ -355,10 +356,10 @@ class MapViewModel @Inject constructor(
                             }
                         }
                         is Resource.Error -> {
+                            // Silently ignore errors from detailed track loading
                             _state.update { state ->
                                 state.copy(
-                                    loadingIndividuals = state.loadingIndividuals - individual.id,
-                                    error = "Nie udało się załadować szczegółów: ${resource.message}"
+                                    loadingIndividuals = state.loadingIndividuals - individual.id
                                 )
                             }
                         }

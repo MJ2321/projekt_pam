@@ -92,7 +92,7 @@ class WildlifeRepositoryImpl @Inject constructor(
             }
             val timestampAfter = sdf.format(java.util.Date(oneYearAgo))    
             
-            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=50&timestamp_after=$timestampAfter&format=json"
+            val baseUrl = "https://www.movebank.org/movebank/service/direct-read?entity_type=event&study_id=$studyId&sensor_type_id=653&attributes=timestamp,location_lat,location_long,individual_id&max_events_per_individual=10&max_events=30&timestamp_after=$timestampAfter&format=json"
             val url = if (licenseMd5 != null) "$baseUrl&license-md5=$licenseMd5" else baseUrl
 
             try {
@@ -103,23 +103,26 @@ class WildlifeRepositoryImpl @Inject constructor(
                     val contentType = body.contentType()?.subtype
 
                     if (contentType != "json") {
-                        val responseBody = body.string().trim()
+                        val source = body.source()
+                        source.request(8192) // Peek at the first 8KB
+                        val peek = source.buffer.clone().readUtf8()
 
-                        android.util.Log.d("WildlifeRepo", "Text response: ${responseBody.take(200)}")
-
-                        if (responseBody.contains("License Terms:")) {
-                            return@withContext Resource.LicenseRequired(responseBody)
+                        if (peek.contains("License Terms:", ignoreCase = true)) {
+                            val fullText = body.string()
+                            return@withContext Resource.LicenseRequired(fullText)
                         }
 
-                        if (responseBody.startsWith("<p>No")) {
-                            return@withContext Resource.Error("Brak uprawnie\u0144 lub brak danych (odmowa dost\u0119pu).")
+                        if (peek.startsWith("<p>No") || peek.contains("Error:", ignoreCase = true)) {
+                            val msg = if (peek.startsWith("<p>No")) "Brak uprawnień lub brak danych." else peek.take(200)
+                            return@withContext Resource.Error(msg)
                         }
 
-                        if (responseBody.isEmpty()) {
+                        if (peek.isEmpty()) {
                             return@withContext Resource.Success(emptyList())
                         }
 
-                        val tracks = parseTracks(responseBody)
+                        // Process CSV stream efficiently
+                        val tracks = parseCsvTracksStream(body.byteStream())
                         tracksCache[studyId] = tracks
                         return@withContext Resource.Success(tracks)
                     }
@@ -286,34 +289,51 @@ class WildlifeRepositoryImpl @Inject constructor(
     }
 
     private fun parseTracks(csvString: String): List<AnimalTrack> {
-        val lines = csvString.lineSequence().filter { it.isNotBlank() }.toList()
-        if (lines.size < 2) return emptyList()
+        return parseCsvTracksStream(java.io.ByteArrayInputStream(csvString.toByteArray()))
+    }
 
-        val headers = lines[0].split(",")
-        val latIdx = headers.indexOf("location_lat")
-        val lonIdx = headers.indexOf("location_long")
-        val indIdIdx = headers.indexOf("individual_id")
-
-        if (latIdx == -1 || lonIdx == -1 || indIdIdx == -1) return emptyList()
-
+    private fun parseCsvTracksStream(inputStream: java.io.InputStream): List<AnimalTrack> {
         val locationsByIndividual = mutableMapOf<Long, MutableList<Location>>()
+        val eventCountsByIndividual = mutableMapOf<Long, Int>()
+        val reader = inputStream.bufferedReader()
+        
+        try {
+            val headerLine = reader.readLine() ?: return emptyList()
+            val headers = headerLine.split(",")
+            val latIdx = headers.indexOf("location_lat")
+            val lonIdx = headers.indexOf("location_long")
+            val indIdIdx = headers.indexOf("individual_id")
 
-        lines.drop(1).forEach { line ->
-            val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
-            if (cols.size > maxOf(latIdx, lonIdx, indIdIdx)) {
-                val lat = cols[latIdx].toDoubleOrNull()
-                val lon = cols[lonIdx].toDoubleOrNull()
-                val individualId = cols[indIdIdx].toLongOrNull()
+            if (latIdx == -1 || lonIdx == -1 || indIdIdx == -1) return emptyList()
 
-                if (lat != null && lon != null && individualId != null) {
-                    locationsByIndividual.getOrPut(individualId) { mutableListOf() }.add(Location(lat, lon))
+            var lineCount = 0
+            reader.forEachLine { line ->
+                val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
+                if (cols.size > maxOf(latIdx, lonIdx, indIdIdx)) {
+                    val lat = cols[latIdx].toDoubleOrNull()
+                    val lon = cols[lonIdx].toDoubleOrNull()
+                    val individualId = cols[indIdIdx].toLongOrNull()
+
+                    if (lat != null && lon != null && individualId != null) {
+                        if (!locationsByIndividual.containsKey(individualId) && locationsByIndividual.size >= 3) {
+                            // Stop after 3 animals to match JSON logic
+                            return@forEachLine
+                        }
+                        
+                        val list = locationsByIndividual.getOrPut(individualId) { mutableListOf() }
+                        list.add(Location(lat, lon))
+                        eventCountsByIndividual[individualId] = eventCountsByIndividual.getOrDefault(individualId, 0) + 1
+                        lineCount++
+                    }
                 }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("WildlifeRepo", "CSV parse error: ${e.message}")
+        } finally {
+            inputStream.close()
         }
-
-        return locationsByIndividual.map { (id, locations) ->
-            AnimalTrack(individualId = id, locations = locations)
-        }
+        
+        return locationsByIndividual.map { AnimalTrack(it.key, it.value) }
     }
 
     private fun parseJsonTracksStream(inputStream: java.io.InputStream): List<AnimalTrack> {
@@ -350,19 +370,13 @@ class WildlifeRepositoryImpl @Inject constructor(
                 reader.endObject()
                 eventCount++
                 if (lat != null && lon != null && individualId != null) {       
-                    if (!locationsByIndividual.containsKey(individualId) && locationsByIndividual.size >= 1) {
-                        // Zatrzymujemy czytanie JSONa już po 1 zwierzęciu! 
-                        // Zapobiegnie to potężnym obciążeniom sieci na dużych badaniach (bo stream się po prostu ucznie).
+                    if (!locationsByIndividual.containsKey(individualId) && locationsByIndividual.size >= 3) {
+                        // Zatrzymujemy czytanie JSONa po 3 zwierzętach (tyle wyświetla UI)
                         break
                     }
-                    val count = eventCountsByIndividual.getOrDefault(individualId, 0)
                     val list = locationsByIndividual.getOrPut(individualId) { mutableListOf() }
-
-                    // Zapisujemy tylko co czwarty punkt, aby zyskać na dystansie a zmniejszyć gęstość
-                    if (count % 4 == 0) {
-                        list.add(Location(lat, lon))
-                    }
-                    eventCountsByIndividual[individualId] = count + 1
+                    list.add(Location(lat, lon))
+                    eventCountsByIndividual[individualId] = eventCountsByIndividual.getOrDefault(individualId, 0) + 1
                 }
             }
             reader.endArray()

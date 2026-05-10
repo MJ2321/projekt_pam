@@ -221,22 +221,26 @@ fun MapScreen(
                 )
             }
             
-            state.error?.let { rawError ->
-                val displayError = if (
-                    rawError.contains("<!doctype", ignoreCase = true) ||
-                    rawError.length > 220
-                ) {
-                    "Serwer chwilowo zwraca błąd. Spróbuj ponownie za moment."
-                } else {
-                    rawError
+            // Only show errors when not actively searching (to avoid confusing "server error" messages)
+            val isSearching = state.searchQuery.isNotBlank()
+            if (!isSearching) {
+                state.error?.let { rawError ->
+                    val displayError = if (
+                        rawError.contains("<!doctype", ignoreCase = true) ||
+                        rawError.length > 220
+                    ) {
+                        "Serwer chwilowo zwraca błąd. Spróbuj ponownie za moment."
+                    } else {
+                        rawError
+                    }
+                    Text(
+                        text = "Error: $displayError",
+                        color = Color.Red,
+                        modifier = Modifier
+                            .padding(16.dp)
+                            .zIndex(1f)
+                    )
                 }
-                Text(
-                    text = "Error: $displayError",
-                    color = Color.Red,
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .zIndex(1f)
-                )
             }
 
             // Obsługa dialogu licencji
@@ -368,6 +372,7 @@ private fun updateMapContent(
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
+                    isGeodesic = true
                     outlinePaint.color = android.graphics.Color.parseColor("#800080")
                     outlinePaint.strokeWidth = 6f
                 }
@@ -383,6 +388,7 @@ private fun updateMapContent(
             if (points.size > 1) {
                 val polyline = Polyline().apply {
                     setPoints(points)
+                    isGeodesic = true // Follow Earth's curvature for long distances
                     outlinePaint.color = android.graphics.Color.parseColor("#800080")
                     outlinePaint.strokeWidth = 6f
                 }
