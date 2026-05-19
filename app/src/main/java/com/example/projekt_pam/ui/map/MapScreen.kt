@@ -312,6 +312,8 @@ private fun updateMapContent(
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                 if (study.accessType == com.example.projekt_pam.domain.model.AccessType.DOWNLOAD) {
                     icon = androidx.core.content.ContextCompat.getDrawable(context, com.example.projekt_pam.R.drawable.ic_blue_pin)
+                } else {
+                    icon = androidx.core.content.ContextCompat.getDrawable(context, com.example.projekt_pam.R.drawable.ic_green_pin)
                 }
                 setOnMarkerClickListener { clicked, _ ->
                     onStudySelected(study)

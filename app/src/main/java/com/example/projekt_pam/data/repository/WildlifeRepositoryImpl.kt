@@ -26,19 +26,15 @@ class WildlifeRepositoryImpl @Inject constructor(
     private val tracksCache = java.util.concurrent.ConcurrentHashMap<Long, List<AnimalTrack>>()
 
     override suspend fun getStudies(): Resource<List<Study>> = try {
-        // Fetch all viewable studies
         val allResponse = executeWithRateLimitRetry { api.getAllStudies() }
-        
-        // Fetch downloadable study IDs
         val downloadableResponse = executeWithRateLimitRetry { api.getDownloadableStudies() }
-
+        
         if (allResponse.isSuccessful && downloadableResponse.isSuccessful) {
             val allCsv = allResponse.body()?.string().orEmpty()
             val downloadCsv = downloadableResponse.body()?.string().orEmpty()
-
+            
             val downloadableIds = parseDownloadableIdsCsv(downloadCsv)
             val studies = parseStudiesCsv(allCsv, downloadableIds)
-            
             Resource.Success(studies)
         } else {
             val errorMsg = if (!allResponse.isSuccessful) {

@@ -18,7 +18,6 @@ interface MovebankApi {
     @GET("direct-read")
     suspend fun getAllStudies(
         @Query("entity_type") entityType: String = "study",
-        @Query("attributes") attributes: String = "id,name,main_location_lat,main_location_long",
         @Query("license_accepted") licenseAccepted: Boolean = true
     ): Response<ResponseBody>
 
